@@ -1,23 +1,99 @@
-# clean base image containing only comfyui, comfy-cli and comfyui-manager
+# Krea2 image-edit worker with every node used by the original workflow.
 FROM runpod/worker-comfyui:5.8.4-base
 
-# build-time tokens for gated downloads — never baked into final image.
-# pass via: docker build --build-arg HF_TOKEN=$HF_TOKEN ...
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
+
+# Build-time credentials are only used while downloading gated assets.
+# Pass them through the RunPod/GitHub build configuration; never commit them.
 ARG HF_TOKEN=""
+ARG CIVITAI_API_KEY=""
+ARG KREA2EDIT_COMMIT="86f886dac23013d88996e3a2e99093ba44d322fb"
 
-# install custom nodes into comfyui
-RUN git clone https://github.com/ClownsharkBatwing/RES4LYF /comfyui/custom_nodes/RES4LYF && cd /comfyui/custom_nodes/RES4LYF && (git checkout 0dc91c00c4c3fb38e7874fcd7a2a327765e8882c 2>/dev/null || (git fetch origin 0dc91c00c4c3fb38e7874fcd7a2a327765e8882c --depth=1 && git checkout 0dc91c00c4c3fb38e7874fcd7a2a327765e8882c) || echo "WARN: commit 0dc91c00c4c3fb38e7874fcd7a2a327765e8882c unreachable in https://github.com/ClownsharkBatwing/RES4LYF, falling back to default branch HEAD")
-RUN git clone https://github.com/yolain/ComfyUI-Easy-Use /comfyui/custom_nodes/ComfyUI-Easy-Use && cd /comfyui/custom_nodes/ComfyUI-Easy-Use && (git checkout 130c1b5796d9876a5f853fa0bea88e808cfda4ad 2>/dev/null || (git fetch origin 130c1b5796d9876a5f853fa0bea88e808cfda4ad --depth=1 && git checkout 130c1b5796d9876a5f853fa0bea88e808cfda4ad) || echo "WARN: commit 130c1b5796d9876a5f853fa0bea88e808cfda4ad unreachable in https://github.com/yolain/ComfyUI-Easy-Use, falling back to default branch HEAD")
-RUN git clone https://github.com/chflame163/ComfyUI_LayerStyle /comfyui/custom_nodes/ComfyUI_LayerStyle && cd /comfyui/custom_nodes/ComfyUI_LayerStyle && (git checkout d94bef1ee5ed3656f5ff1bb2830a4ffd94f40935 2>/dev/null || (git fetch origin d94bef1ee5ed3656f5ff1bb2830a4ffd94f40935 --depth=1 && git checkout d94bef1ee5ed3656f5ff1bb2830a4ffd94f40935) || echo "WARN: commit d94bef1ee5ed3656f5ff1bb2830a4ffd94f40935 unreachable in https://github.com/chflame163/ComfyUI_LayerStyle, falling back to default branch HEAD")
-RUN git clone https://github.com/rgthree/rgthree-comfy /comfyui/custom_nodes/rgthree-comfy && cd /comfyui/custom_nodes/rgthree-comfy && (git checkout 738105af5fb14e96fbecaf406dc356e284797e8c 2>/dev/null || (git fetch origin 738105af5fb14e96fbecaf406dc356e284797e8c --depth=1 && git checkout 738105af5fb14e96fbecaf406dc356e284797e8c) || echo "WARN: commit 738105af5fb14e96fbecaf406dc356e284797e8c unreachable in https://github.com/rgthree/rgthree-comfy, falling back to default branch HEAD")
-RUN comfy node install --exit-on-fail comfyui-krea2edit --mode remote
+ENV PYTHONUNBUFFERED=1
 
-# download models into comfyui
-RUN BACKOFFS="10 20 30 60 90" && for i in 1 2 3 4 5; do HF_TOKEN=$HF_TOKEN comfy model download --url 'https://huggingface.co/Comfy-Org/Krea-2/resolve/main/diffusion_models/krea2_raw_int8_convrot.safetensors' --relative-path models/diffusion_models --filename 'krea2_raw_int8_convrot.safetensors' && break; if [ $i -eq 5 ]; then echo "model-download failed after 5 attempts" >&2; exit 1; fi; SLEEP=$(echo $BACKOFFS | cut -d ' ' -f $i) && echo "model-download attempt $i failed; retrying in $SLEEP seconds" >&2; sleep $SLEEP; done
-RUN BACKOFFS="10 20 30 60 90" && for i in 1 2 3 4 5; do HF_TOKEN=$HF_TOKEN comfy model download --url 'https://huggingface.co/Comfy-Org/Qwen-Image_ComfyUI/resolve/main/split_files/text_encoders/qwen_2.5_vl_7b_fp8_scaled.safetensors' --relative-path models/text_encoders --filename 'qwen_2.5_vl_7b_fp8_scaled.safetensors' && break; if [ $i -eq 5 ]; then echo "model-download failed after 5 attempts" >&2; exit 1; fi; SLEEP=$(echo $BACKOFFS | cut -d ' ' -f $i) && echo "model-download attempt $i failed; retrying in $SLEEP seconds" >&2; sleep $SLEEP; done
-RUN BACKOFFS="10 20 30 60 90" && for i in 1 2 3 4 5; do HF_TOKEN=$HF_TOKEN comfy model download --url 'https://huggingface.co/Comfy-Org/Qwen3-VL/resolve/main/text_encoders/qwen3vl_4b_bf16.safetensors' --relative-path models/text_encoders --filename 'qwen3vl_4b_bf16.safetensors' && break; if [ $i -eq 5 ]; then echo "model-download failed after 5 attempts" >&2; exit 1; fi; SLEEP=$(echo $BACKOFFS | cut -d ' ' -f $i) && echo "model-download attempt $i failed; retrying in $SLEEP seconds" >&2; sleep $SLEEP; done
-RUN BACKOFFS="10 20 30 60 90" && for i in 1 2 3 4 5; do HF_TOKEN=$HF_TOKEN comfy model download --url 'https://huggingface.co/Comfy-Org/Qwen-Image_ComfyUI/resolve/main/split_files/vae/qwen_image_vae.safetensors' --relative-path models/vae --filename 'qwen_image_vae.safetensors' && break; if [ $i -eq 5 ]; then echo "model-download failed after 5 attempts" >&2; exit 1; fi; SLEEP=$(echo $BACKOFFS | cut -d ' ' -f $i) && echo "model-download attempt $i failed; retrying in $SLEEP seconds" >&2; sleep $SLEEP; done
-RUN BACKOFFS="10 20 30 60 90" && for i in 1 2 3 4 5; do HF_TOKEN=$HF_TOKEN comfy model download --url 'https://huggingface.co/Kijai/WanVideo_comfy/resolve/main/Wan2_1_VAE_fp32.safetensors' --relative-path models/vae --filename 'wan21_vae_fp32.safetensors' && break; if [ $i -eq 5 ]; then echo "model-download failed after 5 attempts" >&2; exit 1; fi; SLEEP=$(echo $BACKOFFS | cut -d ' ' -f $i) && echo "model-download attempt $i failed; retrying in $SLEEP seconds" >&2; sleep $SLEEP; done
+# Clone exact revisions. A failed checkout must fail the image build instead of
+# silently falling back to a branch whose node schema may not match the workflow.
+RUN set -eux; \
+    install -d /comfyui/custom_nodes; \
+    clone_node() { \
+      local repo="$1" dest="$2" commit="$3"; \
+      git clone --depth=1 "https://github.com/${repo}.git" "$dest"; \
+      git -C "$dest" fetch --depth=1 origin "$commit"; \
+      git -C "$dest" checkout --detach "$commit"; \
+    }; \
+    clone_node "ClownsharkBatwing/RES4LYF" \
+      /comfyui/custom_nodes/RES4LYF \
+      0dc91c00c4c3fb38e7874fcd7a2a327765e8882c; \
+    clone_node "yolain/ComfyUI-Easy-Use" \
+      /comfyui/custom_nodes/ComfyUI-Easy-Use \
+      130c1b5796d9876a5f853fa0bea88e808cfda4ad; \
+    clone_node "chflame163/ComfyUI_LayerStyle" \
+      /comfyui/custom_nodes/ComfyUI_LayerStyle \
+      d94bef1ee5ed3656f5ff1bb2830a4ffd94f40935; \
+    clone_node "rgthree/rgthree-comfy" \
+      /comfyui/custom_nodes/rgthree-comfy \
+      738105af5fb14e96fbecaf406dc356e284797e8c; \
+    clone_node "lbouaraba/comfyui-krea2edit" \
+      /comfyui/custom_nodes/comfyui-krea2edit \
+      "$KREA2EDIT_COMMIT"
 
-# copy all input data (like images or videos) into comfyui (uncomment and adjust if needed)
-# COPY input/ /comfyui/input/
+# Install every dependency declared by the custom node packs. The previous
+# image only cloned some repositories, so import failures were invisible until
+# the first serverless job.
+RUN set -eux; \
+    for requirements in /comfyui/custom_nodes/*/requirements.txt; do \
+      if [[ -f "$requirements" ]]; then \
+        python3 -m pip install --no-cache-dir -r "$requirements"; \
+      fi; \
+    done
+
+RUN set -eux; \
+    install -d /comfyui/models/diffusion_models \
+      /comfyui/models/text_encoders /comfyui/models/vae /comfyui/models/loras; \
+    BACKOFFS=(10 20 30 60 90); \
+    download_hf() { \
+      local url="$1" relative_path="$2" filename="$3"; \
+      for attempt in 1 2 3 4 5; do \
+        if HF_TOKEN="$HF_TOKEN" comfy model download \
+          --url "$url" --relative-path "$relative_path" --filename "$filename"; then \
+          return 0; \
+        fi; \
+        if [[ "$attempt" == 5 ]]; then return 1; fi; \
+        sleep "${BACKOFFS[$((attempt - 1))]}"; \
+      done; \
+    }; \
+    download_hf \
+      https://huggingface.co/Comfy-Org/Krea-2/resolve/main/diffusion_models/krea2_raw_int8_convrot.safetensors \
+      models/diffusion_models krea2_raw_int8_convrot.safetensors; \
+    download_hf \
+      https://huggingface.co/Comfy-Org/Krea-2/resolve/main/text_encoders/qwen3vl_4b_bf16.safetensors \
+      models/text_encoders qwen3vl_4b_bf16.safetensors; \
+    download_hf \
+      https://huggingface.co/Kijai/WanVideo/resolve/main/Wan2_1_VAE_fp32.safetensors \
+      models/vae wan21_vae_fp32.safetensors; \
+    download_hf \
+      https://huggingface.co/Comfy-Org/Krea-2/resolve/main/loras/krea2_turbo_lora_rank_64_bf16.safetensors \
+      models/loras krea2_turbo_lora_rank_64_bf16.safetensors; \
+    download_hf \
+      https://huggingface.co/conradlocke/krea2-identity-edit/resolve/main/krea2_identity_edit_v1_2.safetensors \
+      models/loras krea2_identity_edit_v1_2.safetensors
+
+# This public Civitai model currently requires an authenticated download.
+# CIVITAI_API_KEY is a build argument only and is not written to the image.
+RUN set -eux; \
+    test -n "$CIVITAI_API_KEY" || { \
+      echo "CIVITAI_API_KEY is required to include krea2filterbypass.safetensors" >&2; \
+      exit 1; \
+    }; \
+    curl --fail --location --retry 3 --proto '=https' --tlsv1.2 \
+      --header "Authorization: Bearer ${CIVITAI_API_KEY}" \
+      --output /comfyui/models/loras/krea2filterbypass.safetensors \
+      https://civitai.com/api/download/models/3066812
+
+# Fail the build if any workflow node or model is missing. This prevents a
+# broken image from reaching a RunPod endpoint and only failing on first use.
+COPY validate_nodes.py /tmp/validate_nodes.py
+RUN python3 /tmp/validate_nodes.py
+
+# Input images are uploaded per job by the RunPod handler; no baked example.png
+# is needed.
