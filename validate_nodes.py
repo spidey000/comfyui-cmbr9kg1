@@ -20,14 +20,14 @@ REQUIRED_NODES = {
     "Krea2EditGroundedEncode",
 }
 
-REQUIRED_FILES = {
+BUILD_REQUIRED_FILES = {
     "/comfyui/models/diffusion_models/krea2_raw_int8_convrot.safetensors",
     "/comfyui/models/text_encoders/qwen3vl_4b_bf16.safetensors",
     "/comfyui/models/vae/wan21_vae_fp32.safetensors",
     "/comfyui/models/loras/krea2_turbo_lora_rank_64_bf16.safetensors",
-    "/comfyui/models/loras/krea2filterbypass.safetensors",
     "/comfyui/models/loras/krea2_identity_edit_v1_2.safetensors",
 }
+RUNTIME_REQUIRED_FILES = {"/comfyui/models/loras/krea2filterbypass.safetensors"}
 
 
 def main() -> None:
@@ -45,9 +45,12 @@ def main() -> None:
             + ", ".join(missing_nodes)
         )
 
+    required_files = BUILD_REQUIRED_FILES | (
+        RUNTIME_REQUIRED_FILES if os.environ.get("KREA2_VALIDATE_RUNTIME_ASSETS") == "1" else set()
+    )
     missing_files = sorted(
         path
-        for path in REQUIRED_FILES
+        for path in required_files
         if not os.path.isfile(path) or os.path.getsize(path) == 0
     )
     if missing_files:

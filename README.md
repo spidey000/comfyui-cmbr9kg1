@@ -29,7 +29,7 @@ The Dockerfile downloads the exact files expected by the API workflow:
 - `models/text_encoders/qwen3vl_4b_bf16.safetensors`
 - `models/vae/wan21_vae_fp32.safetensors`
 - `models/loras/krea2_turbo_lora_rank_64_bf16.safetensors`
-- `models/loras/krea2filterbypass.safetensors`
+- `models/loras/krea2filterbypass.safetensors` (downloaded at worker startup)
 - `models/loras/krea2_identity_edit_v1_2.safetensors`
 
 Source links:
@@ -40,28 +40,22 @@ Source links:
 - Turbo LoRA: https://huggingface.co/Comfy-Org/Krea-2/resolve/main/loras/krea2_turbo_lora_rank_64_bf16.safetensors
 - Identity Edit LoRA: https://huggingface.co/conradlocke/krea2-identity-edit/resolve/main/krea2_identity_edit_v1_2.safetensors
 - Filter-bypass LoRA: https://civitai.com/api/download/models/3066812
+  Expected SHA-256: `AC6114D7112AE2397EB26B9E6E9623AAD059D346FC285EA050FFB042C7C6748E`
 
-The Civitai download requires `CIVITAI_API_KEY`. `HF_TOKEN` is optional because
-the official Comfy-Org VAE mirror is public. Build-time credentials must not be
-committed or written into the image. The GitHub token is unrelated to Civitai
-and must not be used as a substitute.
+All Hugging Face URLs above are public and are downloaded into the image; no
+Hugging Face token or build secret is required. The Civitai filter-bypass LoRA
+is downloaded at startup using the runtime `CIVITAI_API_KEY`. The bootstrap
+skips downloads only when the existing file matches the published checksum;
+otherwise it verifies the downloaded file before atomically replacing it.
 
 ## Build locally
 
 ```bash
-export HF_TOKEN='optional_huggingface_read_token'
-export CIVITAI_API_KEY='civitai_api_key'
-
-docker build \
-  --build-arg HF_TOKEN="$HF_TOKEN" \
-  --build-arg CIVITAI_API_KEY="$CIVITAI_API_KEY" \
-  -t krea2-edit .
+docker build -t krea2-edit .
 ```
 
-The build is intentionally strict: without the Civitai credential, or if a
-download produces no non-empty file, it stops rather than creating an image that
-cannot execute the original workflow. The resulting image is large; use
-sufficient RunPod container/network-volume storage.
+The build validates all public assets and nodes. The resulting image is large;
+use sufficient RunPod container/network-volume storage.
 
 ## Run locally
 
@@ -77,7 +71,10 @@ array. No `example.png` is baked into the image.
 1. Push this branch to GitHub after reviewing the diff.
 2. In RunPod Serverless choose **Deploy from GitHub**.
 3. Select this repository and branch.
-4. Configure the build argument/secret `CIVITAI_API_KEY` (`HF_TOKEN` is optional).
+4. Configure the endpoint runtime environment exactly as:
+   `CIVITAI_API_KEY={{ RUNPOD_SECRET_CIVITAI_API_KEY }}`.
+   Do not configure a Docker build argument or build secret. Startup downloads
+   the Civitai LoRA before starting ComfyUI.
 5. Use `api-workflow.json` as the handler's workflow payload.
 
 Do not place RunPod, GitHub, Hugging Face, or Civitai tokens in the repository.
@@ -86,6 +83,7 @@ The GitHub repository is public, so cloning it does not require a GitHub token.
 ## Files
 
 - `Dockerfile` — pinned custom nodes, model/LoRA downloads, strict validation.
+- `bootstrap.sh` — runtime checksum verification/download and worker startup.
 - `validate_nodes.py` — build-time registration and asset check.
 - `api-workflow.json` — ComfyUI API workflow.
 - `workflow.json` — original canvas workflow.

@@ -3,12 +3,6 @@ FROM runpod/worker-comfyui:5.8.4-base
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
-# Build-time credentials are only used while downloading gated assets.
-# Pass them through the RunPod/GitHub build configuration; never commit them.
-# The official Comfy-Org VAE mirror below is public; HF_TOKEN remains optional
-# for the other public Hugging Face assets.
-ARG HF_TOKEN=""
-ARG CIVITAI_API_KEY=""
 ARG KREA2EDIT_COMMIT="86f886dac23013d88996e3a2e99093ba44d322fb"
 
 ENV PYTHONUNBUFFERED=1
@@ -60,7 +54,7 @@ RUN set -eux; \
       local target="/comfyui/${relative_path}/${filename}"; \
       for attempt in 1 2 3 4 5; do \
         rm -f "$target"; \
-        if HF_TOKEN="$HF_TOKEN" HF_API_TOKEN="$HF_TOKEN" comfy model download \
+        if comfy model download \
           --url "$url" --relative-path "$relative_path" --filename "$filename" \
           && [[ -s "$target" ]]; then \
           return 0; \
@@ -86,26 +80,13 @@ RUN set -eux; \
       https://huggingface.co/conradlocke/krea2-identity-edit/resolve/main/krea2_identity_edit_v1_2.safetensors \
       models/loras krea2_identity_edit_v1_2.safetensors
 
-# This public Civitai model currently requires an authenticated download.
-# CIVITAI_API_KEY is a build argument only and is not written to the image.
-RUN set -eux; \
-    test -n "$CIVITAI_API_KEY" || { \
-      echo "CIVITAI_API_KEY is required to include krea2filterbypass.safetensors" >&2; \
-      exit 1; \
-    }; \
-    curl --fail --location --retry 3 --proto '=https' --tlsv1.2 \
-      --header "Authorization: Bearer ${CIVITAI_API_KEY}" \
-      --output /comfyui/models/loras/krea2filterbypass.safetensors \
-      https://civitai.com/api/download/models/3066812; \
-    test -s /comfyui/models/loras/krea2filterbypass.safetensors || { \
-      echo "Civitai download produced no file" >&2; \
-      exit 1; \
-    }
-
 # Fail the build if any workflow node or model is missing. This prevents a
 # broken image from reaching a RunPod endpoint and only failing on first use.
 COPY validate_nodes.py /tmp/validate_nodes.py
 RUN python3 /tmp/validate_nodes.py
+COPY bootstrap.sh /usr/local/bin/krea2-runtime-init
+RUN chmod +x /usr/local/bin/krea2-runtime-init
+ENTRYPOINT ["/usr/local/bin/krea2-runtime-init"]
 
 # Input images are uploaded per job by the RunPod handler; no baked example.png
 # is needed.
