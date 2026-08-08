@@ -5,6 +5,8 @@ SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
 # Build-time credentials are only used while downloading gated assets.
 # Pass them through the RunPod/GitHub build configuration; never commit them.
+# The official Comfy-Org VAE mirror below is public; HF_TOKEN remains optional
+# for the other public Hugging Face assets.
 ARG HF_TOKEN=""
 ARG CIVITAI_API_KEY=""
 ARG KREA2EDIT_COMMIT="86f886dac23013d88996e3a2e99093ba44d322fb"
@@ -13,6 +15,8 @@ ENV PYTHONUNBUFFERED=1
 
 # Clone exact revisions. A failed checkout must fail the image build instead of
 # silently falling back to a branch whose node schema may not match the workflow.
+# The VAE keeps the filename expected by the original workflow while using the
+# public official Comfy-Org repackaged Wan VAE instead of the gated Kijai URL.
 RUN set -eux; \
     install -d /comfyui/custom_nodes; \
     clone_node() { \
@@ -53,11 +57,15 @@ RUN set -eux; \
     BACKOFFS=(10 20 30 60 90); \
     download_hf() { \
       local url="$1" relative_path="$2" filename="$3"; \
+      local target="/comfyui/${relative_path}/${filename}"; \
       for attempt in 1 2 3 4 5; do \
-        if HF_TOKEN="$HF_TOKEN" comfy model download \
-          --url "$url" --relative-path "$relative_path" --filename "$filename"; then \
+        rm -f "$target"; \
+        if HF_TOKEN="$HF_TOKEN" HF_API_TOKEN="$HF_TOKEN" comfy model download \
+          --url "$url" --relative-path "$relative_path" --filename "$filename" \
+          && [[ -s "$target" ]]; then \
           return 0; \
         fi; \
+        echo "Download failed or produced no file: $filename (attempt $attempt/5)" >&2; \
         if [[ "$attempt" == 5 ]]; then return 1; fi; \
         sleep "${BACKOFFS[$((attempt - 1))]}"; \
       done; \
@@ -69,7 +77,7 @@ RUN set -eux; \
       https://huggingface.co/Comfy-Org/Krea-2/resolve/main/text_encoders/qwen3vl_4b_bf16.safetensors \
       models/text_encoders qwen3vl_4b_bf16.safetensors; \
     download_hf \
-      https://huggingface.co/Kijai/WanVideo/resolve/main/Wan2_1_VAE_fp32.safetensors \
+      https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/resolve/main/split_files/vae/wan_2.1_vae.safetensors \
       models/vae wan21_vae_fp32.safetensors; \
     download_hf \
       https://huggingface.co/Comfy-Org/Krea-2/resolve/main/loras/krea2_turbo_lora_rank_64_bf16.safetensors \
@@ -88,7 +96,11 @@ RUN set -eux; \
     curl --fail --location --retry 3 --proto '=https' --tlsv1.2 \
       --header "Authorization: Bearer ${CIVITAI_API_KEY}" \
       --output /comfyui/models/loras/krea2filterbypass.safetensors \
-      https://civitai.com/api/download/models/3066812
+      https://civitai.com/api/download/models/3066812; \
+    test -s /comfyui/models/loras/krea2filterbypass.safetensors || { \
+      echo "Civitai download produced no file" >&2; \
+      exit 1; \
+    }
 
 # Fail the build if any workflow node or model is missing. This prevents a
 # broken image from reaching a RunPod endpoint and only failing on first use.

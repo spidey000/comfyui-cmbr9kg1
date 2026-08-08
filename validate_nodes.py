@@ -45,7 +45,11 @@ def main() -> None:
             + ", ".join(missing_nodes)
         )
 
-    missing_files = sorted(path for path in REQUIRED_FILES if not os.path.isfile(path))
+    missing_files = sorted(
+        path
+        for path in REQUIRED_FILES
+        if not os.path.isfile(path) or os.path.getsize(path) == 0
+    )
     if missing_files:
         raise SystemExit("Missing required model files:\n" + "\n".join(missing_files))
 
