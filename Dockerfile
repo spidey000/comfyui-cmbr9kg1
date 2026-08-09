@@ -4,7 +4,6 @@ FROM runpod/worker-comfyui:5.8.4-base@sha256:81db5414200d8c5c8163e7e0da5fe4fbb6c
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
 ARG KREA2EDIT_COMMIT="86f886dac23013d88996e3a2e99093ba44d322fb"
-ARG KREA2_SKIP_NODE_CHECK=0
 
 ENV PYTHONUNBUFFERED=1
 
@@ -44,91 +43,6 @@ RUN set -eux; \
     clone_node "lbouaraba/comfyui-krea2edit" \
       /comfyui/custom_nodes/comfyui-krea2edit \
       "$KREA2EDIT_COMMIT"
-
-# Compatibility alias: preserve the literal `beta` scheduler used by the
-# source Pastebin workflow with the pinned RES4LYF commit.
-RUN python3 - <<'PY'
-from pathlib import Path
-import ast
-import re
-
-root = Path("/comfyui/custom_nodes/RES4LYF")
-helper = root / "helper.py"
-samplers = root / "sigmas.py"
-for path in (helper, samplers):
-    if not path.is_file():
-        raise SystemExit(f"Expected RES4LYF file is missing: {path}")
-
-helper_text = helper.read_text()
-helper_tree = ast.parse(helper_text, filename=str(helper))
-helper_node = next(
-    (node for node in ast.walk(helper_tree)
-     if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
-     and node.name == "get_res4lyf_scheduler_list"),
-    None,
-)
-if helper_node is None or not hasattr(helper_node, "end_lineno"):
-    raise SystemExit("RES4LYF scheduler helper structure changed")
-helper_lines = helper_text.splitlines(keepends=True)
-start, end = helper_node.lineno - 1, helper_node.end_lineno
-body = "".join(helper_lines[start:end])
-block_pattern = re.compile(
-    r"(?m)^(?P<indent>[ \t]*)if (?P<quote>['\"])beta57(?P=quote) not in scheduler_names:\n"
-    r"(?P=indent)[ \t]+scheduler_names\.append\((?P=quote)beta57(?P=quote)\)"
-)
-block_matches = list(block_pattern.finditer(body))
-if len(block_matches) != 1:
-    raise SystemExit("Expected exactly one beta57 scheduler block")
-match = block_matches[0]
-indent, quote = match.group("indent"), match.group("quote")
-replacement = (
-    f"{indent}if {quote}beta{quote} not in scheduler_names:\n"
-    f"{indent}    scheduler_names.append({quote}beta{quote})\n"
-    f"{indent}if {quote}beta57{quote} not in scheduler_names:\n"
-    f"{indent}    scheduler_names.append({quote}beta57{quote})"
-)
-updated_body = body[:match.start()] + replacement + body[match.end():]
-helper.write_text("".join(helper_lines[:start]) + updated_body + "".join(helper_lines[end:]))
-
-helper_tree = ast.parse(helper.read_text(), filename=str(helper))
-literal_values = {
-    node.value for node in ast.walk(helper_tree)
-    if isinstance(node, ast.Constant) and isinstance(node.value, str)
-}
-if not {"beta", "beta57"} <= literal_values:
-    raise SystemExit("Helper does not contain separate beta scheduler literals")
-if any(
-    isinstance(node, ast.Call)
-    and isinstance(node.func, ast.Attribute)
-    and node.func.attr == "append"
-    and len(node.args) == 2
-    and all(isinstance(arg, ast.Constant) for arg in node.args)
-    and [arg.value for arg in node.args] == ["beta", "beta57"]
-    for node in ast.walk(helper_tree)
-):
-    raise SystemExit("Helper contains an invalid multi-argument append")
-
-samplers_text = samplers.read_text()
-samplers_tree = ast.parse(samplers_text, filename=str(samplers))
-sigmas = next(
-    (node for node in ast.walk(samplers_tree)
-     if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
-     and node.name == "get_sigmas"),
-    None,
-)
-if sigmas is None or not hasattr(sigmas, "end_lineno"):
-    raise SystemExit("RES4LYF get_sigmas structure changed")
-sampler_lines = samplers_text.splitlines(keepends=True)
-start, end = sigmas.lineno - 1, sigmas.end_lineno
-body = "".join(sampler_lines[start:end])
-pattern = re.compile(r"scheduler == (['\"])beta57\1")
-matches = list(pattern.finditer(body))
-if len(matches) != 1:
-    raise SystemExit("Unexpected beta57 condition in RES4LYF get_sigmas")
-body = body[:matches[0].start()] + "scheduler in ('beta', 'beta57')" + body[matches[0].end():]
-samplers.write_text("".join(sampler_lines[:start]) + body + "".join(sampler_lines[end:]))
-ast.parse(samplers.read_text(), filename=str(samplers))
-PY
 
 # Install every dependency declared by the custom node packs. The previous
 # image only cloned some repositories, so import failures were invisible until
@@ -181,7 +95,7 @@ RUN set -eux; \
 # Fail the build if any workflow node or model is missing. This prevents a
 # broken image from reaching a RunPod endpoint and only failing on first use.
 COPY validate_nodes.py /tmp/validate_nodes.py
-RUN KREA2_SKIP_NODE_CHECK="$KREA2_SKIP_NODE_CHECK" python3 /tmp/validate_nodes.py
+RUN KREA2_SKIP_NODE_CHECK=1 python3 /tmp/validate_nodes.py
 COPY bootstrap.sh /usr/local/bin/krea2-runtime-init
 RUN chmod +x /usr/local/bin/krea2-runtime-init
 ENTRYPOINT ["/usr/local/bin/krea2-runtime-init"]
