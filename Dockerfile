@@ -54,7 +54,7 @@ import re
 
 root = Path("/comfyui/custom_nodes/RES4LYF")
 helper = root / "helper.py"
-samplers = root / "beta" / "samplers.py"
+samplers = root / "sigmas.py"
 for path in (helper, samplers):
     if not path.is_file():
         raise SystemExit(f"Expected RES4LYF file is missing: {path}")
