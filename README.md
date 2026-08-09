@@ -17,8 +17,9 @@ The image installs every non-core node used by the original workflow:
 
 Each node pack's `requirements.txt` is installed explicitly. The build validates
 dependencies only; runtime validation imports ComfyUI, checks node registration,
-and verifies the Network Volume assets. Runtime validation remains strict and
-fails if a required node or model is missing.
+and verifies the Network Volume assets in report-only mode: warnings never block
+worker startup. Strict validation remains available with `KREA2_REPORT_ONLY=0`
+for manual/CI checks.
 
 ## Network Volume models
 
@@ -32,8 +33,9 @@ layout:
 - `/runpod-volume/models/loras/krea2_turbo_lora_rank_64_bf16.safetensors`
 - `/runpod-volume/models/loras/krea2_identity_edit_v1_2.safetensors`
 
-The Civitai filter-bypass LoRA is seeded at worker startup into
-`/runpod-volume/models/loras/` using `CIVITAI_API_KEY`.
+The Civitai filter-bypass LoRA is OPTIONAL at startup and is attempted only when
+`CIVITAI_API_KEY` is set. Prefer pre-placing it at
+`/runpod-volume/models/loras/krea2filterbypass.safetensors`.
 
 Source links:
 
@@ -43,6 +45,7 @@ Source links:
 - Turbo LoRA: https://huggingface.co/Comfy-Org/Krea-2/resolve/952f49d49653cb42e7d6cf7cbfad74738073ec7d/loras/krea2_turbo_lora_rank_64_bf16.safetensors
 - Identity Edit LoRA: https://huggingface.co/conradlocke/krea2-identity-edit/resolve/89e9e7a09ee2e5c9331e952063d79b1b8a703280/krea2_identity_edit_v1_2.safetensors
 - Filter-bypass LoRA: https://civitai.com/api/download/models/3066812
+  Alternative: https://huggingface.co/Kutches/Kr3a/resolve/main/krea2filterbypass.safetensors
   Expected SHA-256: `AC6114D7112AE2397EB26B9E6E9623AAD059D346FC285EA050FFB042C7C6748E`
 
 The standard-Python bootstrap applies a download timeout and checksum

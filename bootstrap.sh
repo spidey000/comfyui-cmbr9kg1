@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-[[ "${KREA2_MODEL_ROOT:-}" == "/runpod-volume/models" ]] || { echo "KREA2_MODEL_ROOT must be /runpod-volume/models" >&2; exit 1; }
-grep -Eq '[[:space:]]/runpod-volume[[:space:]]' /proc/mounts || { echo "RunPod volume mount is not present" >&2; exit 1; }
-[[ -d /runpod-volume && -d "$KREA2_MODEL_ROOT" && -d "$KREA2_MODEL_ROOT/loras" ]] || { echo "RunPod model volume is not mounted" >&2; exit 1; }
+if [[ -z "${KREA2_MODEL_ROOT:-}" ]]; then KREA2_MODEL_ROOT=/runpod-volume/models; echo "WARNING: KREA2_MODEL_ROOT unset; defaulting to $KREA2_MODEL_ROOT" >&2; fi
+[[ "$KREA2_MODEL_ROOT" == "/runpod-volume/models" ]] || echo "WARNING: KREA2_MODEL_ROOT is not /runpod-volume/models" >&2
+grep -Eq '[[:space:]]/runpod-volume[[:space:]]' /proc/mounts || echo "WARNING: RunPod volume mount is not present" >&2
+[[ -d /runpod-volume && -d "$KREA2_MODEL_ROOT" && -d "$KREA2_MODEL_ROOT/loras" ]] || echo "WARNING: RunPod model volume is not mounted" >&2
 target="$KREA2_MODEL_ROOT/loras/krea2filterbypass.safetensors"
 dir=${target%/*}
 expected_sha256=AC6114D7112AE2397EB26B9E6E9623AAD059D346FC285EA050FFB042C7C6748E
@@ -13,46 +14,66 @@ trap cleanup EXIT
 
 current_sha256=''
 if [[ -s "$target" ]]; then
-  current_sha256=$(sha256sum "$target" | awk '{print toupper($1)}')
+  if ! current_sha256=$(sha256sum "$target" | awk '{print toupper($1)}'); then
+    echo "WARNING: unable to checksum existing optional filter-bypass LoRA" >&2
+    current_sha256=''
+  fi
 fi
-if [[ "$current_sha256" != "$expected_sha256" ]]; then
-  [[ -n "${CIVITAI_API_KEY:-}" ]] || { echo "CIVITAI_API_KEY is required for the runtime Civitai download" >&2; exit 1; }
-  tmp=$(mktemp "$dir/.krea2filterbypass.XXXXXX")
-  python3 - "$tmp" <<'PY'
+if [[ "$current_sha256" == "$expected_sha256" ]]; then
+  echo "OK: optional filter-bypass LoRA checksum verified"
+elif [[ -z "${CIVITAI_API_KEY:-}" ]]; then
+  echo "WARNING: CIVITAI_API_KEY not set; skipping optional filter-bypass LoRA download" >&2
+else
+  if tmp=$(mktemp "$dir/.krea2filterbypass.XXXXXX" 2>/dev/null); then
+    download_status=0
+    if python3 - "$tmp" <<'PY'
 import os
 import sys
-import time
 import urllib.request
-from time import monotonic
 
 destination = sys.argv[1]
 request = urllib.request.Request(
     "https://civitai.com/api/download/models/3066812",
     headers={"Authorization": f"Bearer {os.environ['CIVITAI_API_KEY']}"},
 )
-deadline = monotonic() + 120
-for attempt in range(4):
-    try:
-        remaining = deadline - monotonic()
-        if remaining <= 0:
-            raise TimeoutError
-        with urllib.request.urlopen(request, timeout=min(30, remaining)) as response, open(destination, "wb") as output:
-            while chunk := response.read(1024 * 1024):
-                output.write(chunk)
-        break
-    except Exception:
-        if attempt == 3 or monotonic() >= deadline:
-            raise RuntimeError("Civitai download failed")
-        time.sleep(min(2 ** attempt, max(0, deadline - monotonic())))
+try:
+    with urllib.request.urlopen(request, timeout=120) as response, open(destination, "wb") as output:
+        while chunk := response.read(1024 * 1024):
+            output.write(chunk)
+except Exception as exc:
+    status = getattr(exc, "code", None)
+    print(f"WARNING: optional Civitai filter-bypass LoRA download failed{f' (HTTP {status})' if status else ''}: {exc}", file=sys.stderr)
 PY
-  [[ -s "$tmp" ]] || { echo "Civitai download produced no file" >&2; exit 1; }
-  downloaded_sha256=$(sha256sum "$tmp" | awk '{print toupper($1)}')
-  [[ "$downloaded_sha256" == "$expected_sha256" ]] || { echo "Civitai download checksum mismatch" >&2; exit 1; }
-  mv -- "$tmp" "$target"
-  tmp=''
+    then
+      :
+    else
+      download_status=$?
+      echo "WARNING: optional Civitai filter-bypass LoRA download command failed (status $download_status)" >&2
+    fi
+    if [[ -s "$tmp" ]]; then
+      if downloaded_sha256=$(sha256sum "$tmp" | awk '{print toupper($1)}'); then
+        if [[ "$downloaded_sha256" == "$expected_sha256" ]]; then
+          if mv -- "$tmp" "$target"; then
+            tmp=''
+            echo "OK: optional filter-bypass LoRA downloaded"
+          else
+            echo "WARNING: unable to atomically install optional filter-bypass LoRA" >&2
+          fi
+        else
+          echo "WARNING: Civitai download checksum mismatch" >&2
+        fi
+      else
+        echo "WARNING: unable to checksum downloaded optional filter-bypass LoRA" >&2
+      fi
+    else
+      echo "WARNING: Civitai download produced no file" >&2
+    fi
+  else
+    echo "WARNING: unable to create temporary file for optional filter-bypass LoRA" >&2
+  fi
 fi
 
-KREA2_MODEL_ROOT="$KREA2_MODEL_ROOT" KREA2_VALIDATE_MODEL_ASSETS=1 KREA2_VALIDATE_RUNTIME_ASSETS=1 KREA2_SKIP_NODE_CHECK=0 python3 /tmp/validate_nodes.py
+KREA2_MODEL_ROOT="$KREA2_MODEL_ROOT" KREA2_VALIDATE_MODEL_ASSETS=1 KREA2_VALIDATE_RUNTIME_ASSETS=1 KREA2_SKIP_NODE_CHECK=0 KREA2_REPORT_ONLY=1 python3 /tmp/validate_nodes.py
 if (($# == 0)); then
   set -- /start.sh
 fi

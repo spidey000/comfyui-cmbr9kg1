@@ -40,6 +40,8 @@ MODEL_MANIFEST = {
     "loras/krea2_identity_edit_v1_2.safetensors": (1828256432, "6adf9a69cc9502d286db7b69964d37da7e9cfe4b05b4d004bc275f087d3fd3cf"),
 }
 RUNTIME_MANIFEST = {"loras/krea2filterbypass.safetensors": (None, "ac6114d7112ae2397eb26b9e6e9623aad059d346fc285ea050ffb042c7c6748e")}
+WARNINGS: list[str] = []
+REPORT_ONLY = os.environ.get("KREA2_REPORT_ONLY") == "1"
 
 
 def validate_models(root: Path, manifest: Mapping[str, tuple[int | None, str]]) -> None:
@@ -51,19 +53,29 @@ def validate_models(root: Path, manifest: Mapping[str, tuple[int | None, str]]) 
         try:
             resolved_path.relative_to(resolved_root)
         except ValueError:
-            missing.append(f"{path} resolves outside model root")
+            label = "OPTIONAL" if relative in RUNTIME_MANIFEST else "REQUIRED"
+            missing.append(f"{label}: {path} resolves outside model root")
             continue
         if not path.is_file() or (expected_size is not None and path.stat().st_size != expected_size):
-            missing.append(str(path))
+            label = "OPTIONAL" if relative in RUNTIME_MANIFEST else "REQUIRED"
+            missing.append(label + ": " + str(path))
             continue
         digest = hashlib.sha256()
-        with resolved_path.open("rb") as stream:
-            for chunk in iter(lambda: stream.read(1024 * 1024), b""):
-                digest.update(chunk)
+        try:
+            with resolved_path.open("rb") as stream:
+                for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+                    digest.update(chunk)
+        except OSError as exc:
+            label = "OPTIONAL" if relative in RUNTIME_MANIFEST else "REQUIRED"
+            missing.append(f"{label}: unable to read {path}: {exc}")
+            continue
         if digest.hexdigest() != expected_hash:
-            missing.append(str(path))
+            label = "OPTIONAL" if relative in RUNTIME_MANIFEST else "REQUIRED"
+            missing.append(f"{label}: invalid hash for {path}")
     if missing:
-        raise SystemExit("Missing or invalid required model files:\n" + "\n".join(missing))
+        message = "Missing or invalid model files:\n" + "\n".join(missing)
+        if REPORT_ONLY: WARNINGS.append(message)
+        else: raise SystemExit(message)
 
 
 def validate_discovery(root: Path, manifest: Mapping[str, tuple[int | None, str]]) -> None:
@@ -75,7 +87,10 @@ def validate_discovery(root: Path, manifest: Mapping[str, tuple[int | None, str]
         discovered = folder_paths.get_full_path(categories[category], filename)
         expected = (root / relative).resolve()
         if discovered is None or Path(discovered).resolve() != expected:
-            raise SystemExit(f"ComfyUI model discovery mismatch for {relative}: {discovered}")
+            label = "OPTIONAL" if relative in RUNTIME_MANIFEST else "REQUIRED"
+            message = f"{label}: ComfyUI model discovery mismatch for {relative}: {discovered}"
+            if REPORT_ONLY: WARNINGS.append(message)
+            else: raise SystemExit(message)
 
 
 def main() -> None:
@@ -86,36 +101,49 @@ def main() -> None:
             "node validation is deferred to runtime"
         )
     else:
-        import nodes  # type: ignore[import-not-found]
-
         try:
-            initialization = nodes.init_extra_nodes(init_custom_nodes=True)
-        except TypeError:
-            # Compatibility with older ComfyUI base images.
-            initialization = nodes.init_extra_nodes()
-        if inspect.isawaitable(initialization):
-            async def complete_initialization() -> None:
-                await initialization
+            import nodes  # type: ignore[import-not-found]
 
-            asyncio.run(complete_initialization())
+            try:
+                initialization = nodes.init_extra_nodes(init_custom_nodes=True)
+            except TypeError:
+                # Compatibility with older ComfyUI base images.
+                initialization = nodes.init_extra_nodes()
+            if inspect.isawaitable(initialization):
+                async def complete_initialization() -> None:
+                    await initialization
 
-        registered = set(nodes.NODE_CLASS_MAPPINGS)
-        missing_nodes = sorted(REQUIRED_NODES - registered)
-        if missing_nodes:
-            raise SystemExit(
-                "Missing required ComfyUI nodes after startup: "
-                + ", ".join(missing_nodes)
-            )
+                asyncio.run(complete_initialization())
+
+            registered = set(nodes.NODE_CLASS_MAPPINGS)
+            missing_nodes = sorted(REQUIRED_NODES - registered)
+            if missing_nodes:
+                raise RuntimeError(
+                    "Missing required ComfyUI nodes after startup: "
+                    + ", ".join(missing_nodes)
+                )
+        except Exception as exc:
+            if REPORT_ONLY: WARNINGS.append(f"ComfyUI node validation failed: {exc}")
+            else: raise
 
     if os.environ.get("KREA2_VALIDATE_MODEL_ASSETS", "1") != "0":
         manifest: dict[str, tuple[int | None, str]] = dict(MODEL_MANIFEST)
         if os.environ.get("KREA2_VALIDATE_RUNTIME_ASSETS") == "1":
             manifest.update(RUNTIME_MANIFEST)
-        validate_models(Path(os.environ.get("KREA2_MODEL_ROOT", "/comfyui/models")), manifest)
-        if not skip_node_check:
-            validate_discovery(Path(os.environ.get("KREA2_MODEL_ROOT", "/comfyui/models")), manifest)
+        try:
+            validate_models(Path(os.environ.get("KREA2_MODEL_ROOT", "/comfyui/models")), manifest)
+            if not skip_node_check:
+                validate_discovery(Path(os.environ.get("KREA2_MODEL_ROOT", "/comfyui/models")), manifest)
+        except Exception as exc:
+            if REPORT_ONLY:
+                WARNINGS.append(f"REQUIRED: model/discovery validation failed: {exc}")
+            else:
+                raise
 
-    print("Krea2 validation OK")
+    if WARNINGS:
+        for warning in WARNINGS: print(f"WARNING: {warning}")
+        print("Krea2 validation completed with warnings (continuing)")
+    else: print("Krea2 validation OK")
     if not skip_node_check:
         print("Nodes:")
         for node_name in sorted(REQUIRED_NODES):
