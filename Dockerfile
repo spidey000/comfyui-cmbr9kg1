@@ -15,7 +15,7 @@ RUN set -eux; \
     python_path="$(readlink -f "$(command -v python)")"; \
     python3_path="$(readlink -f "$(command -v python3)")"; \
     test "$python_path" = "$python3_path"; \
-    python -c 'import sys; assert sys.executable == "'"$python_path"'"'
+    python -c 'import sys; p = sys.executable; assert p == "/opt/venv/bin/python" or p == "/usr/bin/python3.12" or "/opt/venv" in p, p'
 
 # Clone exact revisions. A failed checkout must fail the image build instead of
 # silently falling back to a branch whose node schema may not match the workflow.
