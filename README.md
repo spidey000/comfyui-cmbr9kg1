@@ -5,8 +5,7 @@ Docker image for the RunPod serverless Krea 2 image-edit workflow in
 
 ## What changed
 
-The image now installs and validates every non-core node used by the original
-workflow:
+The image installs every non-core node used by the original workflow:
 
 | Node | Repository | Revision |
 |---|---|---|
@@ -16,28 +15,25 @@ workflow:
 | `Power Lora Loader (rgthree)` | [rgthree-comfy](https://github.com/rgthree/rgthree-comfy) | `738105af5fb14e96fbecaf406dc356e284797e8c` |
 | `Krea2EditModelPatch` / `Krea2EditGroundedEncode` | [comfyui-krea2edit](https://github.com/lbouaraba/comfyui-krea2edit) | `86f886dac23013d88996e3a2e99093ba44d322fb` |
 
-Each node pack's `requirements.txt` is installed explicitly. The build runs
-`validate_nodes.py` and, by default, imports ComfyUI on CPU to validate the
-registration of every node in the workflow. `KREA2_SKIP_NODE_CHECK=1` is only
-a diagnostic escape for environments where that check cannot run; it must not
-be used as the normal build configuration. Runtime validation remains strict
-and fails if a required node or model is missing; no GPU check is added.
+Each node pack's `requirements.txt` is installed explicitly. The build validates
+dependencies only; runtime validation imports ComfyUI, checks node registration,
+and verifies the Network Volume assets. Runtime validation remains strict and
+fails if a required node or model is missing.
 
-The Pastebin workflow uses the literal scheduler value `beta`. The image keeps
-that value available through a fail-closed alias for the pinned RES4LYF
-revision, so a missing or incompatible scheduler alias causes validation to
-fail rather than silently selecting another scheduler.
+## Network Volume models
 
-## Models and LoRAs included
+Model assets are not baked into the Docker image. Attach Network Volume
+`7ppvs7a5jw` and mount it at `/runpod-volume`. It must contain this canonical
+layout:
 
-The Dockerfile downloads the exact files expected by the API workflow:
+- `/runpod-volume/models/unet/krea2_raw_int8_convrot.safetensors`
+- `/runpod-volume/models/clip/qwen3vl_4b_bf16.safetensors`
+- `/runpod-volume/models/vae/wan21_vae_fp32.safetensors`
+- `/runpod-volume/models/loras/krea2_turbo_lora_rank_64_bf16.safetensors`
+- `/runpod-volume/models/loras/krea2_identity_edit_v1_2.safetensors`
 
-- `models/diffusion_models/krea2_raw_int8_convrot.safetensors`
-- `models/text_encoders/qwen3vl_4b_bf16.safetensors`
-- `models/vae/wan21_vae_fp32.safetensors`
-- `models/loras/krea2_turbo_lora_rank_64_bf16.safetensors`
-- `models/loras/krea2filterbypass.safetensors` (downloaded at worker startup)
-- `models/loras/krea2_identity_edit_v1_2.safetensors`
+The Civitai filter-bypass LoRA is seeded at worker startup into
+`/runpod-volume/models/loras/` using `CIVITAI_API_KEY`.
 
 Source links:
 
@@ -49,12 +45,10 @@ Source links:
 - Filter-bypass LoRA: https://civitai.com/api/download/models/3066812
   Expected SHA-256: `AC6114D7112AE2397EB26B9E6E9623AAD059D346FC285EA050FFB042C7C6748E`
 
-All Hugging Face URLs above are public and are downloaded into the image; no
-Hugging Face token or build secret is required. The Civitai filter-bypass LoRA
-is downloaded at startup using the runtime `CIVITAI_API_KEY`. The
-standard-Python bootstrap applies a download timeout and checksum verification:
-it skips downloads only when the existing file matches the published checksum,
-and otherwise verifies the downloaded file before atomically replacing it.
+The standard-Python bootstrap applies a download timeout and checksum
+verification. It skips the Civitai download only when the existing file matches
+the published checksum, and otherwise verifies the downloaded file before
+atomically replacing it.
 
 ## Build locally
 
@@ -62,9 +56,8 @@ and otherwise verifies the downloaded file before atomically replacing it.
 docker build -t krea2-edit .
 ```
 
-The build validates all public assets and all workflow node registrations on
-CPU by default. The resulting image is large; use sufficient RunPod
-container/network-volume storage.
+The build validates dependencies only. Populate the Network Volume before
+deployment; runtime validates node registration and all volume assets.
 
 ## Run locally
 
@@ -78,12 +71,13 @@ array. No `example.png` is baked into the image.
 ## Deploy on RunPod
 
 1. Push this branch to GitHub after reviewing the diff.
-2. In RunPod Serverless choose **Deploy from GitHub**.
+2. In RunPod Serverless choose **Deploy from GitHub** and attach the configured
+   Network Volume at `/runpod-volume`.
 3. Select this repository and branch.
 4. Configure the endpoint runtime environment exactly as:
-   `CIVITAI_API_KEY={{ RUNPOD_SECRET_CIVITAI_API_KEY }}`.
-   Do not configure a Docker build argument or build secret. Startup downloads
-   the Civitai LoRA before starting ComfyUI.
+   `CIVITAI_API_KEY={{ RUNPOD_SECRET_CIVITAI_API_KEY }}` and
+   `KREA2_MODEL_ROOT=/runpod-volume/models`. Startup validates the volume,
+   seeds the Civitai LoRA, and validates assets before ComfyUI starts.
 5. Use `api-workflow.json` as the handler's workflow payload. It is the
    complete API-format conversion of the source workflow. Each
    `input.images[].name` must exactly match the corresponding
@@ -95,9 +89,9 @@ The GitHub repository is public, so cloning it does not require a GitHub token.
 
 ## Files
 
-- `Dockerfile` — pinned custom nodes, model/LoRA downloads, strict validation.
+- `Dockerfile` — pinned custom nodes and strict validation.
 - `bootstrap.sh` — runtime checksum verification/download and worker startup.
-- `validate_nodes.py` — strict runtime node and model check, with build-only node-check opt-out.
+- `validate_nodes.py` — strict runtime node-registration and model-volume check.
 - `api-workflow.json` — ComfyUI API workflow.
 - `workflow.json` — original canvas workflow.
 

@@ -5,6 +5,11 @@ from __future__ import annotations
 
 import os
 import sys
+import hashlib
+import asyncio
+import inspect
+from pathlib import Path
+from collections.abc import Mapping
 
 
 sys.path.insert(0, "/comfyui")
@@ -27,16 +32,50 @@ REQUIRED_NODES = {
     "PrimitiveBoolean",
 }
 
-BUILD_REQUIRED_FILES = {
-    "/comfyui/models/diffusion_models/krea2_raw_int8_convrot.safetensors": 13492686496,
-    "/comfyui/models/text_encoders/qwen3vl_4b_bf16.safetensors": 8875719384,
-    "/comfyui/models/vae/wan21_vae_fp32.safetensors": 253815318,
-    "/comfyui/models/loras/krea2_turbo_lora_rank_64_bf16.safetensors": 469423778,
-    "/comfyui/models/loras/krea2_identity_edit_v1_2.safetensors": 1828256432,
+MODEL_MANIFEST = {
+    "unet/krea2_raw_int8_convrot.safetensors": (13492686496, "5585a4a38c4bcfb6fde2d480a4aa6edf7f665721ebde56d30662c35a45f5fa5c"),
+    "clip/qwen3vl_4b_bf16.safetensors": (8875719384, "36f3ff447ef59201722e8f9ce6020c9819fdcfba6aa2608c4e09b1c0ce114e34"),
+    "vae/wan21_vae_fp32.safetensors": (253815318, "2fc39d31359a4b0a64f55876d8ff7fa8d780956ae2cb13463b0223e15148976b"),
+    "loras/krea2_turbo_lora_rank_64_bf16.safetensors": (469423778, "db8c5bae0a415d448da9d842111d6e51f7d32e47143a3118eb267e5c4773de87"),
+    "loras/krea2_identity_edit_v1_2.safetensors": (1828256432, "6adf9a69cc9502d286db7b69964d37da7e9cfe4b05b4d004bc275f087d3fd3cf"),
 }
-RUNTIME_REQUIRED_FILES = {
-    "/comfyui/models/loras/krea2filterbypass.safetensors": None,
-}
+RUNTIME_MANIFEST = {"loras/krea2filterbypass.safetensors": (None, "ac6114d7112ae2397eb26b9e6e9623aad059d346fc285ea050ffb042c7c6748e")}
+
+
+def validate_models(root: Path, manifest: Mapping[str, tuple[int | None, str]]) -> None:
+    missing = []
+    for relative, (expected_size, expected_hash) in manifest.items():
+        path = root / relative
+        resolved_root = root.resolve()
+        resolved_path = path.resolve()
+        try:
+            resolved_path.relative_to(resolved_root)
+        except ValueError:
+            missing.append(f"{path} resolves outside model root")
+            continue
+        if not path.is_file() or (expected_size is not None and path.stat().st_size != expected_size):
+            missing.append(str(path))
+            continue
+        digest = hashlib.sha256()
+        with resolved_path.open("rb") as stream:
+            for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+                digest.update(chunk)
+        if digest.hexdigest() != expected_hash:
+            missing.append(str(path))
+    if missing:
+        raise SystemExit("Missing or invalid required model files:\n" + "\n".join(missing))
+
+
+def validate_discovery(root: Path, manifest: Mapping[str, tuple[int | None, str]]) -> None:
+    import folder_paths  # type: ignore[import-not-found]
+
+    categories = {"unet": "diffusion_models", "clip": "text_encoders", "vae": "vae", "loras": "loras"}
+    for relative in manifest:
+        category, filename = relative.split("/", 1)
+        discovered = folder_paths.get_full_path(categories[category], filename)
+        expected = (root / relative).resolve()
+        if discovered is None or Path(discovered).resolve() != expected:
+            raise SystemExit(f"ComfyUI model discovery mismatch for {relative}: {discovered}")
 
 
 def main() -> None:
@@ -50,10 +89,15 @@ def main() -> None:
         import nodes  # type: ignore[import-not-found]
 
         try:
-            nodes.init_extra_nodes(init_custom_nodes=True)
+            initialization = nodes.init_extra_nodes(init_custom_nodes=True)
         except TypeError:
             # Compatibility with older ComfyUI base images.
-            nodes.init_extra_nodes()
+            initialization = nodes.init_extra_nodes()
+        if inspect.isawaitable(initialization):
+            async def complete_initialization() -> None:
+                await initialization
+
+            asyncio.run(complete_initialization())
 
         registered = set(nodes.NODE_CLASS_MAPPINGS)
         missing_nodes = sorted(REQUIRED_NODES - registered)
@@ -63,18 +107,13 @@ def main() -> None:
                 + ", ".join(missing_nodes)
             )
 
-    required_files: dict[str, int | None] = dict(BUILD_REQUIRED_FILES)
-    if os.environ.get("KREA2_VALIDATE_RUNTIME_ASSETS") == "1":
-        required_files.update(RUNTIME_REQUIRED_FILES)
-    missing_files = sorted(
-        path
-        for path, expected_size in required_files.items()
-        if not os.path.isfile(path)
-        or os.path.getsize(path) == 0
-        or (expected_size is not None and os.path.getsize(path) != expected_size)
-    )
-    if missing_files:
-        raise SystemExit("Missing required model files:\n" + "\n".join(missing_files))
+    if os.environ.get("KREA2_VALIDATE_MODEL_ASSETS", "1") != "0":
+        manifest: dict[str, tuple[int | None, str]] = dict(MODEL_MANIFEST)
+        if os.environ.get("KREA2_VALIDATE_RUNTIME_ASSETS") == "1":
+            manifest.update(RUNTIME_MANIFEST)
+        validate_models(Path(os.environ.get("KREA2_MODEL_ROOT", "/comfyui/models")), manifest)
+        if not skip_node_check:
+            validate_discovery(Path(os.environ.get("KREA2_MODEL_ROOT", "/comfyui/models")), manifest)
 
     print("Krea2 validation OK")
     if not skip_node_check:

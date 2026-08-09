@@ -1,7 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-target=/comfyui/models/loras/krea2filterbypass.safetensors
+[[ "${KREA2_MODEL_ROOT:-}" == "/runpod-volume/models" ]] || { echo "KREA2_MODEL_ROOT must be /runpod-volume/models" >&2; exit 1; }
+grep -Eq '[[:space:]]/runpod-volume[[:space:]]' /proc/mounts || { echo "RunPod volume mount is not present" >&2; exit 1; }
+[[ -d /runpod-volume && -d "$KREA2_MODEL_ROOT" && -d "$KREA2_MODEL_ROOT/loras" ]] || { echo "RunPod model volume is not mounted" >&2; exit 1; }
+target="$KREA2_MODEL_ROOT/loras/krea2filterbypass.safetensors"
 dir=${target%/*}
 expected_sha256=AC6114D7112AE2397EB26B9E6E9623AAD059D346FC285EA050FFB042C7C6748E
 tmp=''
@@ -49,7 +52,7 @@ PY
   tmp=''
 fi
 
-KREA2_VALIDATE_RUNTIME_ASSETS=1 python3 /tmp/validate_nodes.py
+KREA2_MODEL_ROOT="$KREA2_MODEL_ROOT" KREA2_VALIDATE_MODEL_ASSETS=1 KREA2_VALIDATE_RUNTIME_ASSETS=1 KREA2_SKIP_NODE_CHECK=0 python3 /tmp/validate_nodes.py
 if (($# == 0)); then
   set -- /start.sh
 fi

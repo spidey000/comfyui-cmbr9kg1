@@ -10,6 +10,7 @@ ENV PYTHONUNBUFFERED=1
 RUN set -eux; \
     for command in bash python python3 sha256sum mktemp awk comfy git readlink sleep stat; do command -v "$command"; done; \
     test -d /comfyui; \
+    test -f /comfyui/extra_model_paths.yaml; \
     test -x /start.sh; \
     python_path="$(readlink -f "$(command -v python)")"; \
     python3_path="$(readlink -f "$(command -v python3)")"; \
@@ -55,47 +56,10 @@ RUN set -eux; \
     done; \
     python -m pip check
 
-RUN set -eux; \
-    install -d /comfyui/models/diffusion_models \
-      /comfyui/models/text_encoders /comfyui/models/vae /comfyui/models/loras; \
-    BACKOFFS=(10 20 30 60 90); \
-    download_hf() { \
-      local url="$1" relative_path="$2" filename="$3" expected_size="$4" expected_sha256="$5"; \
-      local target="/comfyui/${relative_path}/${filename}"; \
-      for attempt in 1 2 3 4 5; do \
-        rm -f "$target"; \
-        if comfy model download \
-          --url "$url" --relative-path "$relative_path" --filename "$filename" \
-          && [[ -s "$target" ]] \
-          && [[ "$(stat -c '%s' "$target")" == "$expected_size" ]] \
-          && printf '%s  %s\n' "$expected_sha256" "$target" | sha256sum -c -; then \
-          return 0; \
-        fi; \
-        echo "Download failed or produced no file: $filename (attempt $attempt/5)" >&2; \
-        if [[ "$attempt" == 5 ]]; then return 1; fi; \
-        sleep "${BACKOFFS[$((attempt - 1))]}"; \
-      done; \
-    }; \
-    download_hf \
-      https://huggingface.co/Comfy-Org/Krea-2/resolve/952f49d49653cb42e7d6cf7cbfad74738073ec7d/diffusion_models/krea2_raw_int8_convrot.safetensors \
-      models/diffusion_models krea2_raw_int8_convrot.safetensors 13492686496 5585a4a38c4bcfb6fde2d480a4aa6edf7f665721ebde56d30662c35a45f5fa5c; \
-    download_hf \
-      https://huggingface.co/Comfy-Org/Krea-2/resolve/952f49d49653cb42e7d6cf7cbfad74738073ec7d/text_encoders/qwen3vl_4b_bf16.safetensors \
-      models/text_encoders qwen3vl_4b_bf16.safetensors 8875719384 36f3ff447ef59201722e8f9ce6020c9819fdcfba6aa2608c4e09b1c0ce114e34; \
-    download_hf \
-      https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/resolve/06e001fc51048fb03433a6fb25334de7836704a5/split_files/vae/wan_2.1_vae.safetensors \
-      models/vae wan21_vae_fp32.safetensors 253815318 2fc39d31359a4b0a64f55876d8ff7fa8d780956ae2cb13463b0223e15148976b; \
-    download_hf \
-      https://huggingface.co/Comfy-Org/Krea-2/resolve/952f49d49653cb42e7d6cf7cbfad74738073ec7d/loras/krea2_turbo_lora_rank_64_bf16.safetensors \
-      models/loras krea2_turbo_lora_rank_64_bf16.safetensors 469423778 db8c5bae0a415d448da9d842111d6e51f7d32e47143a3118eb267e5c4773de87; \
-    download_hf \
-      https://huggingface.co/conradlocke/krea2-identity-edit/resolve/89e9e7a09ee2e5c9331e952063d79b1b8a703280/krea2_identity_edit_v1_2.safetensors \
-      models/loras krea2_identity_edit_v1_2.safetensors 1828256432 6adf9a69cc9502d286db7b69964d37da7e9cfe4b05b4d004bc275f087d3fd3cf
-
-# Fail the build if any workflow node or model is missing. This prevents a
-# broken image from reaching a RunPod endpoint and only failing on first use.
+# Dependency validation only; node imports and model assets are deferred to the
+# mounted Network Volume and runtime startup.
 COPY validate_nodes.py /tmp/validate_nodes.py
-RUN KREA2_SKIP_NODE_CHECK=1 python3 /tmp/validate_nodes.py
+RUN KREA2_SKIP_NODE_CHECK=1 KREA2_VALIDATE_MODEL_ASSETS=0 python3 /tmp/validate_nodes.py
 COPY bootstrap.sh /usr/local/bin/krea2-runtime-init
 RUN chmod +x /usr/local/bin/krea2-runtime-init
 ENTRYPOINT ["/usr/local/bin/krea2-runtime-init"]
