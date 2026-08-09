@@ -3,6 +3,10 @@
 Docker image for the RunPod serverless Krea 2 image-edit workflow in
 `api-workflow.json`.
 
+The image updates the existing ComfyUI workspace to the `nightly` channel
+because native Krea2 CLIPLoader/model support is required. The workflow keeps
+`CLIPLoader.type = "krea2"`; do not change it to `qwen_image`.
+
 ## What changed
 
 The image installs every non-core node used by the original workflow:
@@ -15,7 +19,11 @@ The image installs every non-core node used by the original workflow:
 | `Power Lora Loader (rgthree)` | [rgthree-comfy](https://github.com/rgthree/rgthree-comfy) | `738105af5fb14e96fbecaf406dc356e284797e8c` |
 | `Krea2EditModelPatch` / `Krea2EditGroundedEncode` | [comfyui-krea2edit](https://github.com/lbouaraba/comfyui-krea2edit) | `86f886dac23013d88996e3a2e99093ba44d322fb` |
 
-Each node pack's `requirements.txt` is installed explicitly. The build validates
+Each node pack's `requirements.txt` is installed explicitly. The image uses the
+pinned RunPod base `5.8.6-base-cuda12.8.1` at digest
+`sha256:1d4281e01c2bf93762d2d799edb3be4d169a7f9cfdd16ce2d3a6c68dbc9fcb6f`.
+The build-time assertion verifies that native Krea2 CLIPLoader support is
+available before custom nodes are installed. The build validates
 dependencies only; runtime validation imports ComfyUI, checks node registration,
 and verifies the Network Volume assets in report-only mode: warnings never block
 worker startup. Strict validation remains available with `KREA2_REPORT_ONLY=0`

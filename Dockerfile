@@ -1,9 +1,10 @@
 # Krea2 image-edit worker with every node used by the original workflow.
-FROM runpod/worker-comfyui:5.8.4-base@sha256:81db5414200d8c5c8163e7e0da5fe4fbb6c49bd80cb1632417e0ab4ce1329ac6
+FROM runpod/worker-comfyui:5.8.6-base-cuda12.8.1@sha256:1d4281e01c2bf93762d2d799edb3be4d169a7f9cfdd16ce2d3a6c68dbc9fcb6f
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
 ARG KREA2EDIT_COMMIT="86f886dac23013d88996e3a2e99093ba44d322fb"
+ARG COMFYUI_VERSION="nightly"
 
 ENV PYTHONUNBUFFERED=1
 
@@ -16,6 +17,12 @@ RUN set -eux; \
     python3_path="$(readlink -f "$(command -v python3)")"; \
     test "$python_path" = "$python3_path"; \
     python -c 'import sys; p = sys.executable; assert p == "/opt/venv/bin/python" or p == "/usr/bin/python3.12" or "/opt/venv" in p, p'
+
+# Native Krea2 CLIP support is required by the workflow. Update the existing
+# workspace without replacing the RunPod worker entrypoint or torch runtime.
+RUN set -eux; \
+    comfy --skip-prompt --workspace /comfyui update comfy --version "$COMFYUI_VERSION"; \
+    python3 -c 'import sys; sys.path.insert(0, "/comfyui"); import nodes; accepted = nodes.CLIPLoader.INPUT_TYPES()["required"]["type"][0]; print("CLIPLoader accepted types:", accepted); assert "krea2" in accepted, accepted'
 
 # Clone exact revisions. A failed checkout must fail the image build instead of
 # silently falling back to a branch whose node schema may not match the workflow.
