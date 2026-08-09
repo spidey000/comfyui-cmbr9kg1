@@ -9,9 +9,6 @@ import sys
 
 sys.path.insert(0, "/comfyui")
 
-import nodes  # type: ignore[import-not-found]  # noqa: E402
-
-
 REQUIRED_NODES = {
     "LayerUtility: ImageScaleByAspectRatio",
     "ClownsharKSampler_Beta",
@@ -31,19 +28,28 @@ RUNTIME_REQUIRED_FILES = {"/comfyui/models/loras/krea2filterbypass.safetensors"}
 
 
 def main() -> None:
-    try:
-        nodes.init_extra_nodes(init_custom_nodes=True)
-    except TypeError:
-        # Compatibility with older ComfyUI base images.
-        nodes.init_extra_nodes()
-
-    registered = set(nodes.NODE_CLASS_MAPPINGS)
-    missing_nodes = sorted(REQUIRED_NODES - registered)
-    if missing_nodes:
-        raise SystemExit(
-            "Missing required ComfyUI nodes after startup: "
-            + ", ".join(missing_nodes)
+    skip_node_check = os.environ.get("KREA2_SKIP_NODE_CHECK") == "1"
+    if skip_node_check:
+        print(
+            "WARNING: skipping ComfyUI node registration during build; "
+            "node validation is deferred to runtime"
         )
+    else:
+        import nodes  # type: ignore[import-not-found]
+
+        try:
+            nodes.init_extra_nodes(init_custom_nodes=True)
+        except TypeError:
+            # Compatibility with older ComfyUI base images.
+            nodes.init_extra_nodes()
+
+        registered = set(nodes.NODE_CLASS_MAPPINGS)
+        missing_nodes = sorted(REQUIRED_NODES - registered)
+        if missing_nodes:
+            raise SystemExit(
+                "Missing required ComfyUI nodes after startup: "
+                + ", ".join(missing_nodes)
+            )
 
     required_files = BUILD_REQUIRED_FILES | (
         RUNTIME_REQUIRED_FILES if os.environ.get("KREA2_VALIDATE_RUNTIME_ASSETS") == "1" else set()
@@ -57,9 +63,10 @@ def main() -> None:
         raise SystemExit("Missing required model files:\n" + "\n".join(missing_files))
 
     print("Krea2 validation OK")
-    print("Nodes:")
-    for node_name in sorted(REQUIRED_NODES):
-        print(f"  - {node_name}")
+    if not skip_node_check:
+        print("Nodes:")
+        for node_name in sorted(REQUIRED_NODES):
+            print(f"  - {node_name}")
     print("Models and LoRAs: OK")
 
 

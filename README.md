@@ -17,9 +17,11 @@ workflow:
 | `Krea2EditModelPatch` / `Krea2EditGroundedEncode` | [comfyui-krea2edit](https://github.com/lbouaraba/comfyui-krea2edit) | `86f886dac23013d88996e3a2e99093ba44d322fb` |
 
 Each node pack's `requirements.txt` is installed explicitly. The build runs
-`validate_nodes.py` and fails if a required node registration or model file is
-missing. This avoids deploying an image that only fails when the first job is
-submitted.
+`validate_nodes.py` and strictly validates every public model file. RunPod's
+GitHub Docker builder has no NVIDIA driver, so it sets
+`KREA2_SKIP_NODE_CHECK=1` and defers ComfyUI node import/registration to worker
+startup. Runtime validation remains strict and fails if a required node or
+model is missing; no GPU check is added.
 
 ## Models and LoRAs included
 
@@ -54,8 +56,9 @@ otherwise it verifies the downloaded file before atomically replacing it.
 docker build -t krea2-edit .
 ```
 
-The build validates all public assets and nodes. The resulting image is large;
-use sufficient RunPod container/network-volume storage.
+The build validates all public assets and defers node validation until runtime.
+The resulting image is large; use sufficient RunPod container/network-volume
+storage.
 
 ## Run locally
 
@@ -84,6 +87,6 @@ The GitHub repository is public, so cloning it does not require a GitHub token.
 
 - `Dockerfile` — pinned custom nodes, model/LoRA downloads, strict validation.
 - `bootstrap.sh` — runtime checksum verification/download and worker startup.
-- `validate_nodes.py` — build-time registration and asset check.
+- `validate_nodes.py` — strict runtime node and model check, with build-only node-check opt-out.
 - `api-workflow.json` — ComfyUI API workflow.
 - `workflow.json` — original canvas workflow.

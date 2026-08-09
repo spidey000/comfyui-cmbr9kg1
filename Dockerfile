@@ -83,7 +83,7 @@ RUN set -eux; \
 # Fail the build if any workflow node or model is missing. This prevents a
 # broken image from reaching a RunPod endpoint and only failing on first use.
 COPY validate_nodes.py /tmp/validate_nodes.py
-RUN python3 /tmp/validate_nodes.py
+RUN KREA2_SKIP_NODE_CHECK=1 python3 /tmp/validate_nodes.py
 COPY bootstrap.sh /usr/local/bin/krea2-runtime-init
 RUN chmod +x /usr/local/bin/krea2-runtime-init
 ENTRYPOINT ["/usr/local/bin/krea2-runtime-init"]
