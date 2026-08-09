@@ -21,7 +21,7 @@ RUN set -eux; \
 # Native Krea2 CLIP support is required by the workflow. Update the existing
 # workspace without replacing the RunPod worker entrypoint or torch runtime.
 RUN set -eux; \
-    comfy --skip-prompt --workspace /comfyui update comfy --version "$COMFYUI_VERSION"; \
+    /usr/bin/yes | comfy --workspace /comfyui install --version "$COMFYUI_VERSION" --nvidia; \
     python3 -c 'import sys; sys.path.insert(0, "/comfyui"); import nodes; accepted = nodes.CLIPLoader.INPUT_TYPES()["required"]["type"][0]; print("CLIPLoader accepted types:", accepted); assert "krea2" in accepted, accepted'
 
 # Clone exact revisions. A failed checkout must fail the image build instead of
