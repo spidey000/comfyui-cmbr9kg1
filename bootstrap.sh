@@ -73,7 +73,9 @@ PY
   fi
 fi
 
-KREA2_MODEL_ROOT="$KREA2_MODEL_ROOT" KREA2_VALIDATE_MODEL_ASSETS=1 KREA2_VALIDATE_RUNTIME_ASSETS=1 KREA2_SKIP_NODE_CHECK=0 KREA2_REPORT_ONLY=1 python3 /tmp/validate_nodes.py
+# Optional runtime assets warn and are skipped; required assets and nodes still
+# fail bootstrap.  Keep report-only unset so it cannot mask startup failures.
+KREA2_MODEL_ROOT="$KREA2_MODEL_ROOT" KREA2_VALIDATE_MODEL_ASSETS=1 KREA2_VALIDATE_RUNTIME_ASSETS=1 KREA2_SKIP_NODE_CHECK=0 KREA2_REPORT_ONLY=0 python3 /tmp/validate_nodes.py
 if (($# == 0)); then
   set -- /start.sh
 fi

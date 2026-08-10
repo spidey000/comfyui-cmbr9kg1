@@ -45,7 +45,8 @@ REPORT_ONLY = os.environ.get("KREA2_REPORT_ONLY") == "1"
 
 
 def validate_models(root: Path, manifest: Mapping[str, tuple[int | None, str]]) -> None:
-    missing = []
+    required_failures = []
+    optional_failures = []
     for relative, (expected_size, expected_hash) in manifest.items():
         path = root / relative
         resolved_root = root.resolve()
@@ -54,11 +55,15 @@ def validate_models(root: Path, manifest: Mapping[str, tuple[int | None, str]]) 
             resolved_path.relative_to(resolved_root)
         except ValueError:
             label = "OPTIONAL" if relative in RUNTIME_MANIFEST else "REQUIRED"
-            missing.append(f"{label}: {path} resolves outside model root")
+            (optional_failures if label == "OPTIONAL" else required_failures).append(
+                f"{label}: {path} resolves outside model root"
+            )
             continue
         if not path.is_file() or (expected_size is not None and path.stat().st_size != expected_size):
             label = "OPTIONAL" if relative in RUNTIME_MANIFEST else "REQUIRED"
-            missing.append(label + ": " + str(path))
+            (optional_failures if label == "OPTIONAL" else required_failures).append(
+                label + ": " + str(path)
+            )
             continue
         digest = hashlib.sha256()
         try:
@@ -67,15 +72,19 @@ def validate_models(root: Path, manifest: Mapping[str, tuple[int | None, str]]) 
                     digest.update(chunk)
         except OSError as exc:
             label = "OPTIONAL" if relative in RUNTIME_MANIFEST else "REQUIRED"
-            missing.append(f"{label}: unable to read {path}: {exc}")
+            (optional_failures if label == "OPTIONAL" else required_failures).append(
+                f"{label}: unable to read {path}: {exc}"
+            )
             continue
         if digest.hexdigest() != expected_hash:
             label = "OPTIONAL" if relative in RUNTIME_MANIFEST else "REQUIRED"
-            missing.append(f"{label}: invalid hash for {path}")
-    if missing:
-        message = "Missing or invalid model files:\n" + "\n".join(missing)
-        if REPORT_ONLY: WARNINGS.append(message)
-        else: raise SystemExit(message)
+            (optional_failures if label == "OPTIONAL" else required_failures).append(
+                f"{label}: invalid hash for {path}"
+            )
+    if optional_failures:
+        WARNINGS.append("Missing or invalid optional model files:\n" + "\n".join(optional_failures))
+    if required_failures:
+        raise SystemExit("Missing or invalid required model files:\n" + "\n".join(required_failures))
 
 
 def validate_discovery(root: Path, manifest: Mapping[str, tuple[int | None, str]]) -> None:
@@ -89,8 +98,10 @@ def validate_discovery(root: Path, manifest: Mapping[str, tuple[int | None, str]
         if discovered is None or Path(discovered).resolve() != expected:
             label = "OPTIONAL" if relative in RUNTIME_MANIFEST else "REQUIRED"
             message = f"{label}: ComfyUI model discovery mismatch for {relative}: {discovered}"
-            if REPORT_ONLY: WARNINGS.append(message)
-            else: raise SystemExit(message)
+            if label == "OPTIONAL":
+                WARNINGS.append(message)
+            else:
+                raise SystemExit(message)
 
 
 def main() -> None:
@@ -123,8 +134,7 @@ def main() -> None:
                     + ", ".join(missing_nodes)
                 )
         except Exception as exc:
-            if REPORT_ONLY: WARNINGS.append(f"ComfyUI node validation failed: {exc}")
-            else: raise
+            raise RuntimeError(f"ComfyUI node validation failed: {exc}") from exc
 
     if os.environ.get("KREA2_VALIDATE_MODEL_ASSETS", "1") != "0":
         manifest: dict[str, tuple[int | None, str]] = dict(MODEL_MANIFEST)
@@ -134,11 +144,10 @@ def main() -> None:
             validate_models(Path(os.environ.get("KREA2_MODEL_ROOT", "/comfyui/models")), manifest)
             if not skip_node_check:
                 validate_discovery(Path(os.environ.get("KREA2_MODEL_ROOT", "/comfyui/models")), manifest)
-        except Exception as exc:
-            if REPORT_ONLY:
-                WARNINGS.append(f"REQUIRED: model/discovery validation failed: {exc}")
-            else:
-                raise
+        except Exception:
+            # Required assets and discovery are startup prerequisites.  Do not
+            # let report-only mode turn a broken required model into success.
+            raise
 
     if WARNINGS:
         for warning in WARNINGS: print(f"WARNING: {warning}")

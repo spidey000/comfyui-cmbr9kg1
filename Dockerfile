@@ -18,11 +18,15 @@ RUN set -eux; \
     test "$python_path" = "$python3_path"; \
     python -c 'import sys; p = sys.executable; assert p == "/opt/venv/bin/python" or p == "/usr/bin/python3.12" or "/opt/venv" in p, p'
 
-# Native Krea2 CLIP support is required by the workflow. Update the existing
-# workspace without replacing the RunPod worker entrypoint or torch runtime.
+# Native Krea2 CLIP support is required by the workflow. The base image ships
+# with a detached ComfyUI checkout, so update that checkout explicitly before
+# restoring its dependencies. No model assets are downloaded here.
 RUN set -eux; \
-    /usr/bin/yes | comfy --workspace /comfyui install --version "$COMFYUI_VERSION" --nvidia; \
-    python3 -c 'import sys; sys.path.insert(0, "/comfyui"); import nodes; accepted = nodes.CLIPLoader.INPUT_TYPES()["required"]["type"][0]; print("CLIPLoader accepted types:", accepted); assert "krea2" in accepted, accepted'
+    git -C /comfyui fetch --depth=1 origin master; \
+    git -C /comfyui reset --hard FETCH_HEAD; \
+    comfy --skip-prompt --workspace /comfyui install --version "$COMFYUI_VERSION" --nvidia --restore; \
+    python3 -m pip install --no-cache-dir -r /comfyui/requirements.txt; \
+    python3 -c 'import sys; sys.path.insert(0, "/comfyui"); import comfy.options; comfy.options.args_parsing = True; sys.argv = ["krea2-build-check", "--cpu"]; import nodes; accepted = nodes.CLIPLoader.INPUT_TYPES()["required"]["type"][0]; print("CLIPLoader accepted types:", accepted); assert "krea2" in accepted, accepted'
 
 # Clone exact revisions. A failed checkout must fail the image build instead of
 # silently falling back to a branch whose node schema may not match the workflow.
