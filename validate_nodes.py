@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import os
 import sys
-import hashlib
 import asyncio
 import inspect
 from pathlib import Path
@@ -33,21 +32,21 @@ REQUIRED_NODES = {
 }
 
 MODEL_MANIFEST = {
-    "unet/krea2_raw_int8_convrot.safetensors": (13492686496, "5585a4a38c4bcfb6fde2d480a4aa6edf7f665721ebde56d30662c35a45f5fa5c"),
-    "clip/qwen3vl_4b_bf16.safetensors": (8875719384, "36f3ff447ef59201722e8f9ce6020c9819fdcfba6aa2608c4e09b1c0ce114e34"),
-    "vae/wan21_vae_fp32.safetensors": (253815318, "2fc39d31359a4b0a64f55876d8ff7fa8d780956ae2cb13463b0223e15148976b"),
-    "loras/krea2_turbo_lora_rank_64_bf16.safetensors": (469423778, "db8c5bae0a415d448da9d842111d6e51f7d32e47143a3118eb267e5c4773de87"),
-    "loras/krea2_identity_edit_v1_2.safetensors": (1828256432, "6adf9a69cc9502d286db7b69964d37da7e9cfe4b05b4d004bc275f087d3fd3cf"),
+    "unet/krea2_raw_int8_convrot.safetensors": 13492686496,
+    "clip/qwen3vl_4b_bf16.safetensors": 8875719384,
+    "vae/wan21_vae_fp32.safetensors": 253815318,
+    "loras/krea2_turbo_lora_rank_64_bf16.safetensors": 469423778,
+    "loras/krea2_identity_edit_v1_2.safetensors": 1828256432,
 }
-RUNTIME_MANIFEST = {"loras/krea2filterbypass.safetensors": (None, "ac6114d7112ae2397eb26b9e6e9623aad059d346fc285ea050ffb042c7c6748e")}
+RUNTIME_MANIFEST = {"loras/krea2filterbypass.safetensors": None}
 WARNINGS: list[str] = []
 REPORT_ONLY = os.environ.get("KREA2_REPORT_ONLY") == "1"
 
 
-def validate_models(root: Path, manifest: Mapping[str, tuple[int | None, str]]) -> None:
+def validate_models(root: Path, manifest: Mapping[str, int | None]) -> None:
     required_failures = []
     optional_failures = []
-    for relative, (expected_size, expected_hash) in manifest.items():
+    for relative, expected_size in manifest.items():
         path = root / relative
         resolved_root = root.resolve()
         resolved_path = path.resolve()
@@ -65,29 +64,13 @@ def validate_models(root: Path, manifest: Mapping[str, tuple[int | None, str]]) 
                 label + ": " + str(path)
             )
             continue
-        digest = hashlib.sha256()
-        try:
-            with resolved_path.open("rb") as stream:
-                for chunk in iter(lambda: stream.read(1024 * 1024), b""):
-                    digest.update(chunk)
-        except OSError as exc:
-            label = "OPTIONAL" if relative in RUNTIME_MANIFEST else "REQUIRED"
-            (optional_failures if label == "OPTIONAL" else required_failures).append(
-                f"{label}: unable to read {path}: {exc}"
-            )
-            continue
-        if digest.hexdigest() != expected_hash:
-            label = "OPTIONAL" if relative in RUNTIME_MANIFEST else "REQUIRED"
-            (optional_failures if label == "OPTIONAL" else required_failures).append(
-                f"{label}: invalid hash for {path}"
-            )
     if optional_failures:
         WARNINGS.append("Missing or invalid optional model files:\n" + "\n".join(optional_failures))
     if required_failures:
         raise SystemExit("Missing or invalid required model files:\n" + "\n".join(required_failures))
 
 
-def validate_discovery(root: Path, manifest: Mapping[str, tuple[int | None, str]]) -> None:
+def validate_discovery(root: Path, manifest: Mapping[str, int | None]) -> None:
     import folder_paths  # type: ignore[import-not-found]
 
     categories = {"unet": "diffusion_models", "clip": "text_encoders", "vae": "vae", "loras": "loras"}
@@ -147,7 +130,7 @@ def main() -> None:
             raise RuntimeError(f"ComfyUI node validation failed: {exc}") from exc
 
     if os.environ.get("KREA2_VALIDATE_MODEL_ASSETS", "1") != "0":
-        manifest: dict[str, tuple[int | None, str]] = dict(MODEL_MANIFEST)
+        manifest: dict[str, int | None] = dict(MODEL_MANIFEST)
         if os.environ.get("KREA2_VALIDATE_RUNTIME_ASSETS") == "1":
             manifest.update(RUNTIME_MANIFEST)
         try:

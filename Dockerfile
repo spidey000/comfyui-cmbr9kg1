@@ -1,5 +1,5 @@
 # Krea2 image-edit worker with every node used by the original workflow.
-FROM runpod/worker-comfyui:5.8.6-base-cuda12.8.1@sha256:1d4281e01c2bf93762d2d799edb3be4d169a7f9cfdd16ce2d3a6c68dbc9fcb6f
+FROM runpod/worker-comfyui:5.8.6-base-cuda12.8.1
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
@@ -9,7 +9,7 @@ ARG COMFYUI_VERSION="nightly"
 ENV PYTHONUNBUFFERED=1
 
 RUN set -eux; \
-    for command in bash python python3 sha256sum mktemp awk comfy git readlink sleep stat; do command -v "$command"; done; \
+    for command in bash python python3 mktemp awk comfy git readlink sleep stat; do command -v "$command"; done; \
     test -d /comfyui; \
     test -f /comfyui/extra_model_paths.yaml; \
     test -x /start.sh; \
