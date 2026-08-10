@@ -73,6 +73,45 @@ PY
   fi
 fi
 
+# Register the Network Volume with ComfyUI without replacing any existing
+# manifests. The marked block makes this safe to run on every container start.
+python3 - <<'PY'
+import os
+import tempfile
+
+path = "/comfyui/extra_model_paths.yaml"
+marker = "# KREA2_NETWORK_VOLUME_BEGIN"
+root = os.environ.get("KREA2_MODEL_ROOT", "/runpod-volume/models")
+block = f"""{marker}
+krea2_network_volume:
+  base_path: {root}
+  diffusion_models: unet
+  text_encoders: clip
+  vae: vae
+  loras: loras
+# KREA2_NETWORK_VOLUME_END
+"""
+
+try:
+    with open(path, encoding="utf-8") as existing:
+        content = existing.read()
+except FileNotFoundError:
+    content = ""
+
+if marker not in content:
+    prefix = content if not content or content.endswith("\n") else content + "\n"
+    updated = prefix + ("\n" if prefix else "") + block
+    directory = os.path.dirname(path) or "."
+    fd, temporary = tempfile.mkstemp(prefix=".extra_model_paths.", dir=directory, text=True)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as output:
+            output.write(updated)
+        os.replace(temporary, path)
+    finally:
+        if os.path.exists(temporary):
+            os.unlink(temporary)
+PY
+
 # Optional runtime assets warn and are skipped; required assets and nodes still
 # fail bootstrap.  Keep report-only unset so it cannot mask startup failures.
 KREA2_MODEL_ROOT="$KREA2_MODEL_ROOT" KREA2_VALIDATE_MODEL_ASSETS=1 KREA2_VALIDATE_RUNTIME_ASSETS=1 KREA2_SKIP_NODE_CHECK=0 KREA2_REPORT_ONLY=0 python3 /tmp/validate_nodes.py

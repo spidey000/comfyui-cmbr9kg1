@@ -23,11 +23,11 @@ Each node pack's `requirements.txt` is installed explicitly. The image uses the
 pinned RunPod base `5.8.6-base-cuda12.8.1` at digest
 `sha256:1d4281e01c2bf93762d2d799edb3be4d169a7f9cfdd16ce2d3a6c68dbc9fcb6f`.
 The build-time assertion verifies that native Krea2 CLIPLoader support is
-available before custom nodes are installed. The build validates
-dependencies only; runtime validation imports ComfyUI, checks node registration,
-and verifies the Network Volume assets in report-only mode: warnings never block
-worker startup. Strict validation remains available with `KREA2_REPORT_ONLY=0`
-for manual/CI checks.
+available before custom nodes are installed. The build validates dependencies
+only; runtime validation imports ComfyUI, checks node registration, and strictly
+verifies the Network Volume assets before starting the worker. Missing assets or
+model-path discovery failures block startup. `KREA2_REPORT_ONLY=1` remains
+available for manual diagnostics, but the production bootstrap does not use it.
 
 ## Network Volume models
 
@@ -60,6 +60,16 @@ The standard-Python bootstrap applies a download timeout and checksum
 verification. It skips the Civitai download only when the existing file matches
 the published checksum, and otherwise verifies the downloaded file before
 atomically replacing it.
+
+Before strict runtime validation, bootstrap idempotently creates or appends a
+marked `krea2_network_volume` entry in `/comfyui/extra_model_paths.yaml`, using
+`KREA2_MODEL_ROOT` (normally `/runpod-volume/models`) as its `base_path` and
+mapping `unet`, `clip`, `vae`, and `loras` to ComfyUI's corresponding model
+folders. Existing entries in that file are preserved.
+
+This follows ComfyUI's extra-model-paths YAML format: category values are paths
+relative to `base_path`, not absolute paths. If a custom ComfyUI build expects a
+different schema or category name, adjust the runtime mapping there.
 
 ## Populate the Network Volume
 
