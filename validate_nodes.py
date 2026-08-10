@@ -113,6 +113,14 @@ def main() -> None:
         )
     else:
         try:
+            # Match ComfyUI's main startup: custom nodes expect a live
+            # PromptServer.instance (in particular its route registry) while
+            # they are imported.
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            from server import PromptServer  # type: ignore[import-not-found]
+
+            PromptServer(loop)
             import nodes  # type: ignore[import-not-found]
 
             try:
@@ -124,7 +132,7 @@ def main() -> None:
                 async def complete_initialization() -> None:
                     await initialization
 
-                asyncio.run(complete_initialization())
+                loop.run_until_complete(complete_initialization())
 
             registered = set(nodes.NODE_CLASS_MAPPINGS)
             missing_nodes = sorted(REQUIRED_NODES - registered)
@@ -133,6 +141,8 @@ def main() -> None:
                     "Missing required ComfyUI nodes after startup: "
                     + ", ".join(missing_nodes)
                 )
+            loop.close()
+            asyncio.set_event_loop(None)
         except Exception as exc:
             raise RuntimeError(f"ComfyUI node validation failed: {exc}") from exc
 

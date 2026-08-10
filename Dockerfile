@@ -65,6 +65,13 @@ RUN set -eux; \
         python3 -m pip install --no-cache-dir -r "$requirements"; \
       fi; \
     done; \
+    python3 -m pip uninstall -y \
+      opencv-python opencv-python-headless \
+      opencv-contrib-python-headless opencv-contrib-python || true; \
+    python3 -m pip install --no-cache-dir \
+      opencv-python opencv-python-headless opencv-contrib-python-headless; \
+    python3 -m pip install --no-cache-dir opencv-contrib-python; \
+    python3 -c 'from cv2.ximgproc import guidedFilter; print("OpenCV guidedFilter:", guidedFilter)'; \
     python -m pip check
 
 # Dependency validation only; node imports and model assets are deferred to the
