@@ -6,6 +6,7 @@ if [[ -z "${KREA2_MODEL_ROOT:-}" ]]; then KREA2_MODEL_ROOT=/runpod-volume/models
 grep -Eq '[[:space:]]/runpod-volume[[:space:]]' /proc/mounts || echo "WARNING: RunPod volume mount is not present" >&2
 [[ -d /runpod-volume && -d "$KREA2_MODEL_ROOT" && -d "$KREA2_MODEL_ROOT/loras" ]] || echo "WARNING: RunPod model volume is not mounted" >&2
 target="$KREA2_MODEL_ROOT/loras/krea2filterbypass.safetensors"
+unet_target="$KREA2_MODEL_ROOT/unet/lustifyNSFWCheckpoint_v10Krea2.safetensors"
 dir=${target%/*}
 tmp=''
 cleanup() { [[ -z "$tmp" ]] || rm -f -- "$tmp"; }
@@ -56,6 +57,41 @@ PY
     echo "WARNING: unable to create temporary file for optional filter-bypass LoRA" >&2
   fi
 fi
+
+unet_old="$KREA2_MODEL_ROOT/unet/krea2_raw_int8_convrot.safetensors"
+unet_sha256=0505412ED2AC568286C4BF43F8ACE93F9F5A6DD7A607F47F1912A68767E6900D
+unet_size=13148974712
+unet_valid=0
+if [[ -f "$unet_target" ]] && [[ "$(stat -c %s "$unet_target")" == "$unet_size" ]] && [[ "$(sha256sum "$unet_target" | cut -d' ' -f1)" == "${unet_sha256,,}" ]]; then
+  unet_valid=1
+fi
+if (( ! unet_valid )); then
+  [[ -n "${CIVITAI_API_KEY:-}" ]] || { echo "ERROR: CIVITAI_API_KEY is required because the required UNET is missing or invalid" >&2; exit 1; }
+  unet_dir=${unet_target%/*}; mkdir -p "$unet_dir"
+  unet_tmp=$(mktemp "$unet_dir/.lustifyNSFWCheckpoint_v10Krea2.XXXXXX"); tmp="$unet_tmp"
+  python3 - "$unet_tmp" "$unet_size" "$unet_sha256" <<'PY'
+import hashlib, os, sys, urllib.request
+destination, expected_size, expected_hash = sys.argv[1], int(sys.argv[2]), sys.argv[3].lower()
+request = urllib.request.Request("https://civitai.com/api/download/models/3112728?type=Other&format=SafeTensor&fp=bf16", headers={"Authorization": f"Bearer {os.environ['CIVITAI_API_KEY']}"})
+try:
+    with urllib.request.urlopen(request, timeout=120) as response, open(destination, "wb") as output:
+        while chunk := response.read(1024 * 1024): output.write(chunk)
+except Exception as exc:
+    status = getattr(exc, "code", None)
+    print(f"ERROR: required UNET download failed{f' (HTTP {status})' if status else ''}", file=sys.stderr)
+    raise SystemExit(1)
+actual_size = os.path.getsize(destination)
+digest = hashlib.sha256()
+with open(destination, "rb") as verified:
+    while chunk := verified.read(1024 * 1024): digest.update(chunk)
+actual_hash = digest.hexdigest()
+if actual_size != expected_size or actual_hash != expected_hash:
+    print("ERROR: downloaded UNET failed size or SHA-256 verification", file=sys.stderr)
+    raise SystemExit(1)
+PY
+  mv -- "$unet_tmp" "$unet_target"; tmp=''; unet_valid=1
+fi
+if (( unet_valid )); then rm -f -- "$unet_old"; fi
 
 # Register the Network Volume with ComfyUI without replacing any existing
 # manifests. The marked block makes this safe to run on every container start.

@@ -77,6 +77,7 @@ RUN set -eux; \
 # Dependency validation only; node imports and model assets are deferred to the
 # mounted Network Volume and runtime startup.
 COPY validate_nodes.py /tmp/validate_nodes.py
+COPY krea2_lora.py /handler.py /
 RUN KREA2_SKIP_NODE_CHECK=1 KREA2_VALIDATE_MODEL_ASSETS=0 python3 /tmp/validate_nodes.py
 COPY bootstrap.sh /usr/local/bin/krea2-runtime-init
 RUN chmod +x /usr/local/bin/krea2-runtime-init

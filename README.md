@@ -34,19 +34,24 @@ Model assets are not baked into the Docker image. Attach Network Volume
 `7ppvs7a5jw` and mount it at `/runpod-volume`. It must contain this canonical
 layout:
 
-- `/runpod-volume/models/unet/krea2_raw_int8_convrot.safetensors`
+- `/runpod-volume/models/unet/lustifyNSFWCheckpoint_v10Krea2.safetensors`
 - `/runpod-volume/models/clip/qwen3vl_4b_bf16.safetensors`
 - `/runpod-volume/models/vae/wan21_vae_fp32.safetensors`
 - `/runpod-volume/models/loras/krea2_turbo_lora_rank_64_bf16.safetensors`
 - `/runpod-volume/models/loras/krea2_identity_edit_v1_2.safetensors`
 
-The Civitai filter-bypass LoRA is OPTIONAL at startup and is attempted only when
+The required UNET is downloaded from Civitai when missing (using `CIVITAI_API_KEY`); startup fails if it cannot be obtained. The Civitai filter-bypass LoRA is OPTIONAL at startup and is attempted only when
 `CIVITAI_API_KEY` is set. Prefer pre-placing it at
 `/runpod-volume/models/loras/krea2filterbypass.safetensors`.
 
 Source links:
 
-- UNET: https://huggingface.co/Comfy-Org/Krea-2/resolve/952f49d49653cb42e7d6cf7cbfad74738073ec7d/diffusion_models/krea2_raw_int8_convrot.safetensors
+- UNET: https://civitai.com/api/download/models/3112728?type=Other&format=SafeTensor&fp=bf16
+
+Bootstrap verifies the UNET is exactly 13148974712 bytes with SHA-256
+`0505412ED2AC568286C4BF43F8ACE93F9F5A6DD7A607F47F1912A68767E6900D` before
+atomic installation. Only after successful verification does it remove the old
+`krea2_raw_int8_convrot.safetensors`; an absent old file is tolerated.
 - Text encoder: https://huggingface.co/Comfy-Org/Krea-2/resolve/952f49d49653cb42e7d6cf7cbfad74738073ec7d/text_encoders/qwen3vl_4b_bf16.safetensors
 - VAE source (saved as `wan21_vae_fp32.safetensors`): https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/resolve/06e001fc51048fb03433a6fb25334de7836704a5/split_files/vae/wan_2.1_vae.safetensors
 - Turbo LoRA: https://huggingface.co/Comfy-Org/Krea-2/resolve/952f49d49653cb42e7d6cf7cbfad74738073ec7d/loras/krea2_turbo_lora_rank_64_bf16.safetensors
@@ -91,7 +96,7 @@ download() { # url rel size
   test "$(stat -c %s "$part")" = "$3"
   mv -f "$part" "$final"; echo "READY $2"
 }
-download https://huggingface.co/Comfy-Org/Krea-2/resolve/952f49d49653cb42e7d6cf7cbfad74738073ec7d/diffusion_models/krea2_raw_int8_convrot.safetensors unet/krea2_raw_int8_convrot.safetensors 13492686496
+# The required UNET is downloaded by bootstrap using CIVITAI_API_KEY.
 download https://huggingface.co/Comfy-Org/Krea-2/resolve/952f49d49653cb42e7d6cf7cbfad74738073ec7d/text_encoders/qwen3vl_4b_bf16.safetensors clip/qwen3vl_4b_bf16.safetensors 8875719384
 download https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/resolve/06e001fc51048fb03433a6fb25334de7836704a5/split_files/vae/wan_2.1_vae.safetensors vae/wan21_vae_fp32.safetensors 253815318
 download https://huggingface.co/Comfy-Org/Krea-2/resolve/952f49d49653cb42e7d6cf7cbfad74738073ec7d/loras/krea2_turbo_lora_rank_64_bf16.safetensors loras/krea2_turbo_lora_rank_64_bf16.safetensors 469423778
@@ -115,6 +120,10 @@ docker run --rm --gpus all -p 8188:8188 krea2-edit
 
 The worker receives the source image through the RunPod job's `input.images`
 array. No `example.png` is baked into the image.
+
+Optional `input.lora_downloads` accepts 1–7 `{url, strength}` objects (HTTPS
+Hugging Face or Civitai URLs, strength 0–2). `input.civitai_token` may provide
+per-job Civitai authorization; downloaded LoRAs are removed after the job.
 
 ## Deploy on RunPod
 

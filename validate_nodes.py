@@ -32,7 +32,7 @@ REQUIRED_NODES = {
 }
 
 MODEL_MANIFEST = {
-    "unet/krea2_raw_int8_convrot.safetensors": 13492686496,
+    "unet/lustifyNSFWCheckpoint_v10Krea2.safetensors": 13148974712,
     "clip/qwen3vl_4b_bf16.safetensors": 8875719384,
     "vae/wan21_vae_fp32.safetensors": 253815318,
     "loras/krea2_turbo_lora_rank_64_bf16.safetensors": 469423778,
