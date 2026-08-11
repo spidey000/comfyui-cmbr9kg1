@@ -33,7 +33,7 @@ REQUIRED_NODES = {
 
 MODEL_MANIFEST = {
     "unet/lustifyNSFWCheckpoint_v10Krea2.safetensors": 13148974712,
-    "clip/qwen3vl_4b_bf16.safetensors": 8875719384,
+    "clip/qwen3vl_4b_fp8_scaled.safetensors": 5242467968,
     "vae/wan21_vae_fp32.safetensors": 253815318,
     "loras/krea2_turbo_lora_rank_64_bf16.safetensors": 469423778,
     "loras/krea2_identity_edit_v1_2.safetensors": 1828256432,
