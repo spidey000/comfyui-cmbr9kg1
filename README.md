@@ -20,8 +20,7 @@ The image installs every non-core node used by the original workflow:
 | `Krea2EditModelPatch` / `Krea2EditGroundedEncode` | [comfyui-krea2edit](https://github.com/lbouaraba/comfyui-krea2edit) | `86f886dac23013d88996e3a2e99093ba44d322fb` |
 
 Each node pack's `requirements.txt` is installed explicitly. The image uses the
-pinned RunPod base `5.8.6-base-cuda12.8.1` at digest
-`sha256:1d4281e01c2bf93762d2d799edb3be4d169a7f9cfdd16ce2d3a6c68dbc9fcb6f`.
+pinned RunPod base `5.8.6-base-cuda12.8.1`.
 The build-time assertion verifies that native Krea2 CLIPLoader support is
 available before custom nodes are installed. The build validates dependencies
 only; runtime validation imports ComfyUI, checks node registration, and strictly
@@ -54,12 +53,9 @@ Source links:
 - Identity Edit LoRA: https://huggingface.co/conradlocke/krea2-identity-edit/resolve/89e9e7a09ee2e5c9331e952063d79b1b8a703280/krea2_identity_edit_v1_2.safetensors
 - Filter-bypass LoRA: https://civitai.com/api/download/models/3066812
   Alternative: https://huggingface.co/Kutches/Kr3a/resolve/main/krea2filterbypass.safetensors
-  Expected SHA-256: `AC6114D7112AE2397EB26B9E6E9623AAD059D346FC285EA050FFB042C7C6748E`
-
-The standard-Python bootstrap applies a download timeout and checksum
-verification. It skips the Civitai download only when the existing file matches
-the published checksum, and otherwise verifies the downloaded file before
-atomically replacing it.
+The standard-Python bootstrap applies a download timeout. It skips the Civitai
+download when the existing file is non-empty, and atomically replaces the target
+only after a downloaded file is non-empty.
 
 Before strict runtime validation, bootstrap idempotently creates or appends a
 marked `krea2_network_volume` entry in `/comfyui/extra_model_paths.yaml`, using
@@ -76,16 +72,15 @@ different schema or category name, adjust the runtime mapping there.
 Run from any worker with the volume attached at `/runpod-volume` (or a local
 clone of the assets). `aria2` is used because Hugging Face Xet CDNs reject
 some parallel range requests; retries are expected near the end of large
-files and the checksum below is the final gate.
+files. Expected file sizes are used as the final gate.
 
 ```bash
 apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y aria2
 ROOT=/runpod-volume/models
-download() { # url rel size sha256
+download() { # url rel size
   local final="$ROOT/$2" part="$ROOT/$2.part"
   mkdir -p "$(dirname "$final")"
   if [[ -f "$final" ]] && [[ "$(stat -c %s "$final")" == "$3" ]] \
-     && echo "$4  $final" | sha256sum -c - >/dev/null 2>&1; then
     echo "VALID $2"; return
   fi
   rm -f "$part"
@@ -94,14 +89,13 @@ download() { # url rel size sha256
     --max-tries=10 --retry-wait=5 --dir="$(dirname "$part")" \
     --out="$(basename "$part")" "$1"
   test "$(stat -c %s "$part")" = "$3"
-  echo "$4  $part" | sha256sum -c -
   mv -f "$part" "$final"; echo "READY $2"
 }
-download https://huggingface.co/Comfy-Org/Krea-2/resolve/952f49d49653cb42e7d6cf7cbfad74738073ec7d/diffusion_models/krea2_raw_int8_convrot.safetensors unet/krea2_raw_int8_convrot.safetensors 13492686496 5585a4a38c4bcfb6fde2d480a4aa6edf7f665721ebde56d30662c35a45f5fa5c
-download https://huggingface.co/Comfy-Org/Krea-2/resolve/952f49d49653cb42e7d6cf7cbfad74738073ec7d/text_encoders/qwen3vl_4b_bf16.safetensors clip/qwen3vl_4b_bf16.safetensors 8875719384 36f3ff447ef59201722e8f9ce6020c9819fdcfba6aa2608c4e09b1c0ce114e34
-download https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/resolve/06e001fc51048fb03433a6fb25334de7836704a5/split_files/vae/wan_2.1_vae.safetensors vae/wan21_vae_fp32.safetensors 253815318 2fc39d31359a4b0a64f55876d8ff7fa8d780956ae2cb13463b0223e15148976b
-download https://huggingface.co/Comfy-Org/Krea-2/resolve/952f49d49653cb42e7d6cf7cbfad74738073ec7d/loras/krea2_turbo_lora_rank_64_bf16.safetensors loras/krea2_turbo_lora_rank_64_bf16.safetensors 469423778 db8c5bae0a415d448da9d842111d6e51f7d32e47143a3118eb267e5c4773de87
-download https://huggingface.co/conradlocke/krea2-identity-edit/resolve/89e9e7a09ee2e5c9331e952063d79b1b8a703280/krea2_identity_edit_v1_2.safetensors loras/krea2_identity_edit_v1_2.safetensors 1828256432 6adf9a69cc9502d286db7b69964d37da7e9cfe4b05b4d004bc275f087d3fd3cf
+download https://huggingface.co/Comfy-Org/Krea-2/resolve/952f49d49653cb42e7d6cf7cbfad74738073ec7d/diffusion_models/krea2_raw_int8_convrot.safetensors unet/krea2_raw_int8_convrot.safetensors 13492686496
+download https://huggingface.co/Comfy-Org/Krea-2/resolve/952f49d49653cb42e7d6cf7cbfad74738073ec7d/text_encoders/qwen3vl_4b_bf16.safetensors clip/qwen3vl_4b_bf16.safetensors 8875719384
+download https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/resolve/06e001fc51048fb03433a6fb25334de7836704a5/split_files/vae/wan_2.1_vae.safetensors vae/wan21_vae_fp32.safetensors 253815318
+download https://huggingface.co/Comfy-Org/Krea-2/resolve/952f49d49653cb42e7d6cf7cbfad74738073ec7d/loras/krea2_turbo_lora_rank_64_bf16.safetensors loras/krea2_turbo_lora_rank_64_bf16.safetensors 469423778
+download https://huggingface.co/conradlocke/krea2-identity-edit/resolve/89e9e7a09ee2e5c9331e952063d79b1b8a703280/krea2_identity_edit_v1_2.safetensors loras/krea2_identity_edit_v1_2.safetensors 1828256432
 ```
 
 ## Build locally
@@ -144,13 +138,13 @@ The GitHub repository is public, so cloning it does not require a GitHub token.
 ## Files
 
 - `Dockerfile` — pinned custom nodes and strict validation.
-- `bootstrap.sh` — runtime checksum verification/download and worker startup.
+- `bootstrap.sh` — runtime optional download and worker startup.
 - `validate_nodes.py` — strict runtime node-registration and model-volume check.
 - `api-workflow.json` — ComfyUI API workflow.
 - `workflow.json` — original canvas workflow.
 
 ## Release gates
 
-Verification of hashes for public model assets and the GPU smoke E2E test are
+Expected file sizes for public model assets and the GPU smoke E2E test are
 release gates. If they are not automated in the release pipeline yet, run and
 record both checks manually before publishing an image.

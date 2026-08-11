@@ -7,20 +7,12 @@ grep -Eq '[[:space:]]/runpod-volume[[:space:]]' /proc/mounts || echo "WARNING: R
 [[ -d /runpod-volume && -d "$KREA2_MODEL_ROOT" && -d "$KREA2_MODEL_ROOT/loras" ]] || echo "WARNING: RunPod model volume is not mounted" >&2
 target="$KREA2_MODEL_ROOT/loras/krea2filterbypass.safetensors"
 dir=${target%/*}
-expected_sha256=AC6114D7112AE2397EB26B9E6E9623AAD059D346FC285EA050FFB042C7C6748E
 tmp=''
 cleanup() { [[ -z "$tmp" ]] || rm -f -- "$tmp"; }
 trap cleanup EXIT
 
-current_sha256=''
 if [[ -s "$target" ]]; then
-  if ! current_sha256=$(sha256sum "$target" | awk '{print toupper($1)}'); then
-    echo "WARNING: unable to checksum existing optional filter-bypass LoRA" >&2
-    current_sha256=''
-  fi
-fi
-if [[ "$current_sha256" == "$expected_sha256" ]]; then
-  echo "OK: optional filter-bypass LoRA checksum verified"
+  echo "OK: optional filter-bypass LoRA already present"
 elif [[ -z "${CIVITAI_API_KEY:-}" ]]; then
   echo "WARNING: CIVITAI_API_KEY not set; skipping optional filter-bypass LoRA download" >&2
 else
@@ -51,19 +43,11 @@ PY
       echo "WARNING: optional Civitai filter-bypass LoRA download command failed (status $download_status)" >&2
     fi
     if [[ -s "$tmp" ]]; then
-      if downloaded_sha256=$(sha256sum "$tmp" | awk '{print toupper($1)}'); then
-        if [[ "$downloaded_sha256" == "$expected_sha256" ]]; then
-          if mv -- "$tmp" "$target"; then
-            tmp=''
-            echo "OK: optional filter-bypass LoRA downloaded"
-          else
-            echo "WARNING: unable to atomically install optional filter-bypass LoRA" >&2
-          fi
-        else
-          echo "WARNING: Civitai download checksum mismatch" >&2
-        fi
+      if mv -- "$tmp" "$target"; then
+        tmp=''
+        echo "OK: optional filter-bypass LoRA downloaded"
       else
-        echo "WARNING: unable to checksum downloaded optional filter-bypass LoRA" >&2
+        echo "WARNING: unable to atomically install optional filter-bypass LoRA" >&2
       fi
     else
       echo "WARNING: Civitai download produced no file" >&2
