@@ -72,6 +72,11 @@ def validate_models(root: Path, manifest: Mapping[str, int | None]) -> None:
 
 def validate_discovery(root: Path, manifest: Mapping[str, int | None]) -> None:
     import folder_paths  # type: ignore[import-not-found]
+    from utils.extra_config import load_extra_path_config  # type: ignore[import-not-found]
+
+    extra_model_paths = Path("/comfyui/extra_model_paths.yaml")
+    if extra_model_paths.exists():
+        load_extra_path_config(str(extra_model_paths))
 
     categories = {"unet": "diffusion_models", "clip": "text_encoders", "vae": "vae", "loras": "loras"}
     for relative in manifest:
