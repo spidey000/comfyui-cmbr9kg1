@@ -6,16 +6,19 @@ if [[ -z "${KREA2_MODEL_ROOT:-}" ]]; then KREA2_MODEL_ROOT=/runpod-volume/models
 grep -Eq '[[:space:]]/runpod-volume[[:space:]]' /proc/mounts || echo "WARNING: RunPod volume mount is not present" >&2
 [[ -d /runpod-volume && -d "$KREA2_MODEL_ROOT" && -d "$KREA2_MODEL_ROOT/loras" ]] || echo "WARNING: RunPod model volume is not mounted" >&2
 target="$KREA2_MODEL_ROOT/loras/krea2filterbypass.safetensors"
+filter_size=160
+filter_sha256=ac6114d7112ae2397eb26b9e6e9623aad059d346fc285ea050ffb042c7c6748e
 unet_target="$KREA2_MODEL_ROOT/unet/lustifyNSFWCheckpoint_v10Krea2.safetensors"
 dir=${target%/*}
 tmp=''
 cleanup() { [[ -z "$tmp" ]] || rm -f -- "$tmp"; }
 trap cleanup EXIT
 
-if [[ -s "$target" ]]; then
-  echo "OK: optional filter-bypass LoRA already present"
+if [[ -f "$target" ]] && [[ "$(stat -c %s "$target")" == "$filter_size" ]] && [[ "$(sha256sum "$target" | cut -d' ' -f1)" == "$filter_sha256" ]]; then
+  echo "OK: required filter-bypass LoRA already present"
 elif [[ -z "${CIVITAI_API_KEY:-}" ]]; then
-  echo "WARNING: CIVITAI_API_KEY not set; skipping optional filter-bypass LoRA download" >&2
+  echo "ERROR: CIVITAI_API_KEY is required because the required filter-bypass LoRA is missing or invalid" >&2
+  exit 1
 else
   if tmp=$(mktemp "$dir/.krea2filterbypass.XXXXXX" 2>/dev/null); then
     download_status=0
@@ -35,26 +38,41 @@ try:
             output.write(chunk)
 except Exception as exc:
     status = getattr(exc, "code", None)
-    print(f"WARNING: optional Civitai filter-bypass LoRA download failed{f' (HTTP {status})' if status else ''}: {exc}", file=sys.stderr)
+    print(f"ERROR: required Civitai filter-bypass LoRA download failed{f' (HTTP {status})' if status else ''}: {exc}", file=sys.stderr)
+    raise SystemExit(1)
 PY
     then
       :
     else
       download_status=$?
-      echo "WARNING: optional Civitai filter-bypass LoRA download command failed (status $download_status)" >&2
+      echo "ERROR: required Civitai filter-bypass LoRA download command failed (status $download_status)" >&2
     fi
-    if [[ -s "$tmp" ]]; then
+    if [[ "$download_status" -eq 0 ]] && python3 - "$tmp" "$filter_size" "$filter_sha256" <<'PY'
+import hashlib, sys
+path, size, expected = sys.argv[1], int(sys.argv[2]), sys.argv[3]
+digest = hashlib.sha256()
+with open(path, "rb") as source:
+    for chunk in iter(lambda: source.read(1024 * 1024), b""):
+        digest.update(chunk)
+if __import__("os").path.getsize(path) != size or digest.hexdigest() != expected:
+    print("ERROR: downloaded filter-bypass LoRA failed size or SHA-256 verification", file=sys.stderr)
+    raise SystemExit(1)
+PY
+    then
       if mv -- "$tmp" "$target"; then
         tmp=''
-        echo "OK: optional filter-bypass LoRA downloaded"
+        echo "OK: required filter-bypass LoRA downloaded"
       else
-        echo "WARNING: unable to atomically install optional filter-bypass LoRA" >&2
+        echo "ERROR: unable to atomically install required filter-bypass LoRA" >&2
+        exit 1
       fi
     else
-      echo "WARNING: Civitai download produced no file" >&2
+      echo "ERROR: Civitai download produced no verified required filter-bypass LoRA file" >&2
+      exit 1
     fi
   else
-    echo "WARNING: unable to create temporary file for optional filter-bypass LoRA" >&2
+    echo "ERROR: unable to create temporary file for required filter-bypass LoRA" >&2
+    exit 1
   fi
 fi
 
@@ -132,8 +150,8 @@ if marker not in content:
             os.unlink(temporary)
 PY
 
-# Optional runtime assets warn and are skipped; required assets and nodes still
-# fail bootstrap.  Keep report-only unset so it cannot mask startup failures.
+# Runtime assets and nodes are strict prerequisites for the bundled workflow.
+# Keep report-only unset so it cannot mask startup failures.
 KREA2_MODEL_ROOT="$KREA2_MODEL_ROOT" KREA2_VALIDATE_MODEL_ASSETS=1 KREA2_VALIDATE_RUNTIME_ASSETS=1 KREA2_SKIP_NODE_CHECK=0 KREA2_REPORT_ONLY=0 python3 /tmp/validate_nodes.py
 if (($# == 0)); then
   set -- /start.sh

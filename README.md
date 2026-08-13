@@ -39,9 +39,12 @@ layout:
 - `/runpod-volume/models/vae/wan21_vae_fp32.safetensors`
 - `/runpod-volume/models/loras/krea2_turbo_lora_rank_64_bf16.safetensors`
 - `/runpod-volume/models/loras/krea2_identity_edit_v1_2.safetensors`
+- `/runpod-volume/models/loras/krea2filterbypass.safetensors` (required by the bundled API workflow)
 
-The required UNET is downloaded from Civitai when missing (using `CIVITAI_API_KEY`); startup fails if it cannot be obtained. The Civitai filter-bypass LoRA is OPTIONAL at startup and is attempted only when
-`CIVITAI_API_KEY` is set. Prefer pre-placing it at
+The required UNET and filter-bypass LoRA are downloaded from Civitai when
+missing (using `CIVITAI_API_KEY`); startup fails clearly if either cannot be
+obtained or is invalid. The filter-bypass LoRA is a strict prerequisite because
+the bundled API workflow enables it. Prefer pre-placing it at
 `/runpod-volume/models/loras/krea2filterbypass.safetensors`.
 
 Source links:
@@ -59,8 +62,10 @@ atomic installation. Only after successful verification does it remove the old
 - Filter-bypass LoRA: https://civitai.com/api/download/models/3066812
   Alternative: https://huggingface.co/Kutches/Kr3a/resolve/main/krea2filterbypass.safetensors
 The standard-Python bootstrap applies a download timeout. It skips the Civitai
-download when the existing file is non-empty, and atomically replaces the target
-only after a downloaded file is non-empty.
+download when the existing file matches the pinned 160-byte SHA-256
+`ac6114d7112ae2397eb26b9e6e9623aad059d346fc285ea050ffb042c7c6748e`, and atomically
+replaces the target only after a downloaded file matches both pins. If the filter-bypass LoRA is missing
+or invalid, `CIVITAI_API_KEY` is mandatory.
 
 Before strict runtime validation, bootstrap idempotently creates or appends a
 marked `krea2_network_volume` entry in `/comfyui/extra_model_paths.yaml`, using
@@ -147,7 +152,7 @@ The GitHub repository is public, so cloning it does not require a GitHub token.
 ## Files
 
 - `Dockerfile` — pinned custom nodes and strict validation.
-- `bootstrap.sh` — runtime optional download and worker startup.
+- `bootstrap.sh` — required runtime asset download and worker startup.
 - `validate_nodes.py` — strict runtime node-registration and model-volume check.
 - `api-workflow.json` — ComfyUI API workflow.
 - `workflow.json` — original canvas workflow.

@@ -7,13 +7,19 @@ import time
 import os
 import requests
 import base64
+import binascii
 from io import BytesIO
 import websocket
 import uuid
 import tempfile
 import socket
+import http.client
+import ssl
 import traceback
 import logging
+import copy
+import ipaddress
+import re
 from krea2_lora import download_loras, inject_loras
 
 from network_volume import (
@@ -56,9 +62,86 @@ if os.environ.get("WEBSOCKET_TRACE", "false").lower() == "true":
 
 # Host where ComfyUI is running
 COMFY_HOST = "127.0.0.1:8188"
+API_WORKFLOW_PATH = "/api-workflow.json"
+MAX_REMOTE_IMAGE_BYTES = 20 * 1024 * 1024
+MAX_INLINE_IMAGE_BYTES = 20 * 1024 * 1024
+MAX_IMAGE_URL_REDIRECTS = 0
+REMOTE_IMAGE_TIMEOUT_S = 15
 # Enforce a clean state after each job is done
 # see https://docs.runpod.io/docs/handler-additional-controls#refresh-worker
 REFRESH_WORKER = os.environ.get("REFRESH_WORKER", "false").lower() == "true"
+
+
+def _validate_public_image_url(image_url):
+    try:
+        parsed = urllib.parse.urlparse(image_url)
+        hostname = parsed.hostname
+        if (parsed.scheme not in ("http", "https") or not hostname
+                or parsed.username is not None or parsed.password is not None
+                or parsed.fragment or "\\" in image_url
+                or any(char.isspace() or ord(char) < 0x20 for char in image_url)):
+            return "'image_url' must be a safe http(s) URL"
+        port = parsed.port or (443 if parsed.scheme == "https" else 80)
+    except (TypeError, ValueError):
+        return "'image_url' must be an http(s) URL"
+    try:
+        try:
+            ipaddress.ip_address(hostname)
+            return "'image_url' target must be a public hostname"
+        except ValueError:
+            if hostname.isdigit():
+                return "'image_url' target must be a public hostname"
+        addresses = socket.getaddrinfo(hostname, port, type=socket.SOCK_STREAM)
+        if not addresses:
+            return "'image_url' hostname did not resolve"
+        for address_info in addresses:
+            if not ipaddress.ip_address(address_info[4][0]).is_global:
+                return "'image_url' target must resolve only to public addresses"
+    except (OSError, ValueError):
+        return "'image_url' hostname could not be safely resolved"
+    return None
+
+def _download_public_image(image_url):
+    parsed = urllib.parse.urlparse(image_url)
+    port = parsed.port or (443 if parsed.scheme == "https" else 80)
+    addresses = socket.getaddrinfo(parsed.hostname, port, type=socket.SOCK_STREAM)
+    public = [a[4][0] for a in addresses if ipaddress.ip_address(a[4][0]).is_global]
+    if not public:
+        raise ValueError("'image_url' target must resolve only to public addresses")
+    deadline = time.monotonic() + REMOTE_IMAGE_TIMEOUT_S
+    sock = conn = response = None
+    try:
+        sock = socket.create_connection((public[0], port), timeout=max(.001, deadline-time.monotonic()))
+        if parsed.scheme == "https":
+            sock = ssl.create_default_context().wrap_socket(sock, server_hostname=parsed.hostname)
+        sock.settimeout(max(.001, deadline-time.monotonic()))
+        conn = (http.client.HTTPSConnection if parsed.scheme == "https" else http.client.HTTPConnection)(parsed.hostname, port)
+        conn.sock = sock
+        target = urllib.parse.urlunsplit(("", "", parsed.path or "/", parsed.query, ""))
+        conn.request("GET", target, headers={"Host": parsed.netloc})
+        sock.settimeout(max(.001, deadline-time.monotonic()))
+        response = conn.getresponse()
+        if 300 <= response.status < 400: raise ValueError("'image_url' redirects are not allowed")
+        if not 200 <= response.status < 300: raise ValueError(f"HTTP status {response.status}")
+        content_type = response.getheader("Content-Type")
+        if content_type and not content_type.split(";", 1)[0].strip().lower().startswith("image/"):
+            raise ValueError("'image_url' must have an image Content-Type")
+        if response.getheader("Content-Length") and int(response.getheader("Content-Length")) > MAX_REMOTE_IMAGE_BYTES:
+            raise ValueError("'image_url' exceeds the 20 MB download limit")
+        data = bytearray()
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0: raise TimeoutError("remote image download deadline exceeded")
+            sock.settimeout(remaining)
+            chunk = response.read(min(1024 * 1024, MAX_REMOTE_IMAGE_BYTES-len(data)+1))
+            if not chunk: break
+            data.extend(chunk)
+            if len(data) > MAX_REMOTE_IMAGE_BYTES: raise ValueError("'image_url' exceeds the 20 MB download limit")
+        return bytes(data)
+    finally:
+        if response is not None: response.close()
+        if conn is not None: conn.close()
+        elif sock is not None: sock.close()
 
 # ---------------------------------------------------------------------------
 # Helper: quick reachability probe of ComfyUI HTTP endpoint (port 8188)
@@ -148,7 +231,27 @@ def _attempt_websocket_reconnect(ws_url, max_attempts, delay_s, initial_error):
     )
 
 
-def validate_input(job_input):
+def _decode_image_data(value):
+    encoded = value.split(",", 1)[1] if isinstance(value, str) and value.startswith("data:") and "," in value else value
+    try: decoded = base64.b64decode(encoded, validate=True)
+    except (ValueError, binascii.Error) as exc: raise ValueError(f"invalid base64 image data: {exc}") from exc
+    if len(decoded) > MAX_INLINE_IMAGE_BYTES: raise ValueError("decoded image exceeds the 20 MB size limit")
+    return decoded
+
+def _safe_shorthand_name(name, job_id):
+    if name is not None and (not isinstance(name, str) or not name.strip() or "\x00" in name or ".." in name or "/" in name or "\\" in name): raise ValueError("image name must not be blank, contain '..', NUL, or path separators")
+    ext = os.path.splitext(name or "")[1].lower()
+    if not re.fullmatch(r"\.[a-z0-9]{1,10}", ext or ""): ext = ".png"
+    return f"shorthand-{re.sub(r'[^A-Za-z0-9_-]', '', str(job_id)) or 'job'}-{uuid.uuid4().hex}{ext}"
+
+
+def _safe_workflow_image_name(name, job_id):
+    """Return a unique upload name while retaining the source extension."""
+    ext = os.path.splitext(name)[1]
+    safe_job_id = re.sub(r"[^A-Za-z0-9_-]", "", str(job_id or "job")) or "job"
+    return f"workflow-{safe_job_id}-{uuid.uuid4().hex}{ext}"
+
+def validate_input(job_input, job_id=None):
     """
     Validates the input for the handler function.
 
@@ -170,21 +273,105 @@ def validate_input(job_input):
         except json.JSONDecodeError:
             return None, "Invalid JSON format in input"
 
-    # Validate 'workflow' in input
+    if not isinstance(job_input, dict):
+        return None, "Input must be a JSON object"
+
     workflow = job_input.get("workflow")
-    if workflow is None:
-        return None, "Missing 'workflow' parameter"
+    shorthand = workflow is None
+    if shorthand:
+        prompt = job_input.get("prompt")
+        if not isinstance(prompt, str) or not prompt.strip():
+            return None, "Shorthand input requires a non-empty string 'prompt'"
+        try:
+            with open(API_WORKFLOW_PATH, "r", encoding="utf-8") as template_file:
+                workflow = json.load(template_file)
+        except (OSError, json.JSONDecodeError) as exc:
+            return None, f"Unable to load bundled API workflow: {exc}"
+        if not isinstance(workflow, dict): return None, "Bundled API workflow must be a JSON object"
+        for node_id, expected in (("317", "Krea2EditGroundedEncode"), ("78", "LoadImage")):
+            node = workflow.get(node_id)
+            if not isinstance(node, dict): return None, f"Bundled API workflow is missing node {node_id}"
+            if node.get("class_type") != expected: return None, f"Bundled API workflow node {node_id} must have class_type '{expected}'"
+            if not isinstance(node.get("inputs"), dict): return None, f"Bundled API workflow node {node_id} must have dict inputs"
+        workflow = copy.deepcopy(workflow)
+        workflow["317"].setdefault("inputs", {})["prompt"] = prompt
+
+        if "image" in job_input and "image_url" in job_input:
+            return None, "Shorthand input must provide only one of 'image' or 'image_url'"
+        if "image_url" in job_input:
+            image_url = job_input["image_url"]
+            if not isinstance(image_url, str):
+                return None, "'image_url' must be an http(s) URL"
+            url_error = _validate_public_image_url(image_url)
+            if url_error:
+                return None, url_error
+            try:
+                image_value = base64.b64encode(_download_public_image(image_url)).decode("ascii")
+            except (OSError, ValueError, TimeoutError) as exc:
+                return None, f"Unable to download 'image_url': {exc}"
+            images = [{"name": "input.png", "image": image_value}]
+        elif "image" in job_input:
+            image = job_input["image"]
+            if isinstance(image, str):
+                images = [{"name": "input.png", "image": image}]
+            elif isinstance(image, dict) and isinstance(image.get("name"), str) and isinstance(image.get("image"), str):
+                images = [image]
+            else:
+                return None, "'image' must be a base64 string or an object with string 'name' and 'image'"
+        else:
+            return None, "Shorthand input requires 'image' (base64/data URI) or 'image_url'"
+        try:
+            _decode_image_data(images[0]["image"])
+            image_name = _safe_shorthand_name(images[0].get("name"), job_id or uuid.uuid4())
+        except ValueError as exc: return None, str(exc)
+        images[0]["name"] = image_name
+        workflow["78"]["inputs"]["image"] = image_name
+    else:
+        images = job_input.get("images")
 
     # Validate 'images' in input, if provided
-    images = job_input.get("images")
     if images is not None:
         if not isinstance(images, list) or not all(
-            "name" in image and "image" in image for image in images
+            isinstance(image, dict)
+            and isinstance(image.get("name"), str)
+            and isinstance(image.get("image"), str)
+            for image in images
         ):
             return (
                 None,
                 "'images' must be a list of objects with 'name' and 'image' keys",
             )
+
+        if images:
+            images = copy.deepcopy(images)
+            original_names = [image["name"] for image in images]
+            if any(
+                not name.strip()
+                or "\x00" in name
+                or ".." in name
+                or "/" in name
+                or "\\" in name
+                for name in original_names
+            ):
+                return None, "image name must not be blank, contain '..', NUL, or path separators"
+            if len(set(original_names)) != len(original_names):
+                return None, "duplicate image names are not allowed"
+            if not isinstance(workflow, dict):
+                return None, "'workflow' must be an object when images are provided"
+
+            workflow = copy.deepcopy(workflow)
+            renamed = {
+                name: _safe_workflow_image_name(name, job_id or uuid.uuid4())
+                for name in original_names
+            }
+            for node in workflow.values():
+                if not isinstance(node, dict) or node.get("class_type") != "LoadImage":
+                    continue
+                inputs = node.get("inputs")
+                if isinstance(inputs, dict) and inputs.get("image") in renamed:
+                    inputs["image"] = renamed[inputs["image"]]
+            for image in images:
+                image["name"] = renamed[image["name"]]
 
     # Optional: API key for Comfy.org API Nodes, passed per-request
     comfy_org_api_key = job_input.get("comfy_org_api_key")
@@ -317,7 +504,7 @@ def upload_images(images):
             image_data_uri = image["image"]  # Get the full string (might have prefix)
 
             # --- Strip Data URI prefix if present ---
-            if "," in image_data_uri:
+            if isinstance(image_data_uri, str) and image_data_uri.startswith("data:") and "," in image_data_uri:
                 # Find the comma and take everything after it
                 base64_data = image_data_uri.split(",", 1)[1]
             else:
@@ -325,7 +512,7 @@ def upload_images(images):
                 base64_data = image_data_uri
             # --- End strip ---
 
-            blob = base64.b64decode(base64_data)  # Decode the cleaned data
+            blob = _decode_image_data(image_data_uri)
 
             # Prepare the form data
             files = {
@@ -342,7 +529,7 @@ def upload_images(images):
             responses.append(f"Successfully uploaded {name}")
             print(f"worker-comfyui - Successfully uploaded {name}")
 
-        except base64.binascii.Error as e:
+        except (ValueError, binascii.Error) as e:
             error_msg = f"Error decoding base64 for {image.get('name', 'unknown')}: {e}"
             print(f"worker-comfyui - {error_msg}")
             upload_errors.append(error_msg)
@@ -593,7 +780,7 @@ def handler(job):
     job_id = job["id"]
 
     # Make sure that the input is valid
-    validated_data, error_message = validate_input(job_input)
+    validated_data, error_message = validate_input(job_input, job_id)
     if error_message:
         return {"error": error_message}
 

@@ -7,6 +7,7 @@ import os
 import sys
 import asyncio
 import inspect
+import hashlib
 from pathlib import Path
 from collections.abc import Mapping
 
@@ -38,39 +39,41 @@ MODEL_MANIFEST = {
     "loras/krea2_turbo_lora_rank_64_bf16.safetensors": 469423778,
     "loras/krea2_identity_edit_v1_2.safetensors": 1828256432,
 }
-RUNTIME_MANIFEST = {"loras/krea2filterbypass.safetensors": None}
+RUNTIME_MANIFEST = {
+    # Immutable Hugging Face LFS metadata for the documented equivalent asset.
+    "loras/krea2filterbypass.safetensors": (160, "ac6114d7112ae2397eb26b9e6e9623aad059d346fc285ea050ffb042c7c6748e"),
+}
 WARNINGS: list[str] = []
 REPORT_ONLY = os.environ.get("KREA2_REPORT_ONLY") == "1"
 
 
-def validate_models(root: Path, manifest: Mapping[str, int | None]) -> None:
+def validate_models(root: Path, manifest: Mapping[str, int | tuple[int, str] | None]) -> None:
     required_failures = []
-    optional_failures = []
-    for relative, expected_size in manifest.items():
+    for relative, expected in manifest.items():
+        expected_size = expected[0] if isinstance(expected, tuple) else expected
         path = root / relative
         resolved_root = root.resolve()
         resolved_path = path.resolve()
         try:
             resolved_path.relative_to(resolved_root)
         except ValueError:
-            label = "OPTIONAL" if relative in RUNTIME_MANIFEST else "REQUIRED"
-            (optional_failures if label == "OPTIONAL" else required_failures).append(
-                f"{label}: {path} resolves outside model root"
-            )
+            required_failures.append(f"REQUIRED: {path} resolves outside model root")
             continue
         if not path.is_file() or (expected_size is not None and path.stat().st_size != expected_size):
-            label = "OPTIONAL" if relative in RUNTIME_MANIFEST else "REQUIRED"
-            (optional_failures if label == "OPTIONAL" else required_failures).append(
-                label + ": " + str(path)
-            )
+            required_failures.append("REQUIRED: " + str(path))
             continue
-    if optional_failures:
-        WARNINGS.append("Missing or invalid optional model files:\n" + "\n".join(optional_failures))
+        if isinstance(expected, tuple):
+            digest = hashlib.sha256()
+            with path.open("rb") as source:
+                for chunk in iter(lambda: source.read(1024 * 1024), b""):
+                    digest.update(chunk)
+            if digest.hexdigest() != expected[1]:
+                required_failures.append("REQUIRED: " + str(path) + " (SHA-256 mismatch)")
     if required_failures:
         raise SystemExit("Missing or invalid required model files:\n" + "\n".join(required_failures))
 
 
-def validate_discovery(root: Path, manifest: Mapping[str, int | None]) -> None:
+def validate_discovery(root: Path, manifest: Mapping[str, int | tuple[int, str] | None]) -> None:
     import folder_paths  # type: ignore[import-not-found]
     from utils.extra_config import load_extra_path_config  # type: ignore[import-not-found]
 
@@ -84,12 +87,7 @@ def validate_discovery(root: Path, manifest: Mapping[str, int | None]) -> None:
         discovered = folder_paths.get_full_path(categories[category], filename)
         expected = (root / relative).resolve()
         if discovered is None or Path(discovered).resolve() != expected:
-            label = "OPTIONAL" if relative in RUNTIME_MANIFEST else "REQUIRED"
-            message = f"{label}: ComfyUI model discovery mismatch for {relative}: {discovered}"
-            if label == "OPTIONAL":
-                WARNINGS.append(message)
-            else:
-                raise SystemExit(message)
+            raise SystemExit(f"REQUIRED: ComfyUI model discovery mismatch for {relative}: {discovered}")
 
 
 def main() -> None:
@@ -135,7 +133,7 @@ def main() -> None:
             raise RuntimeError(f"ComfyUI node validation failed: {exc}") from exc
 
     if os.environ.get("KREA2_VALIDATE_MODEL_ASSETS", "1") != "0":
-        manifest: dict[str, int | None] = dict(MODEL_MANIFEST)
+        manifest: dict[str, int | tuple[int, str] | None] = dict(MODEL_MANIFEST)
         if os.environ.get("KREA2_VALIDATE_RUNTIME_ASSETS") == "1":
             manifest.update(RUNTIME_MANIFEST)
         try:
