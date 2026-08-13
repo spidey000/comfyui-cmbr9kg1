@@ -175,5 +175,78 @@ class ShorthandTests(unittest.TestCase):
         self.assertIn("path separators", error)
 
 
+class ShorthandOverrideTests(unittest.TestCase):
+    """Optional generation overrides applied only in shorthand mode."""
+
+    def setUp(self):
+        self.template = {
+            "317": {"class_type": "Krea2EditGroundedEncode", "inputs": {"prompt": "old", "grounding_px": 1024}},
+            "318": {"class_type": "Krea2EditGroundedEncode", "inputs": {"prompt": "", "grounding_px": 1024}},
+            "319": {"class_type": "Krea2EditModelPatch", "inputs": {"model": ["297", 0], "source_latent": ["88", 0]}},
+            "320": {"class_type": "ClownsharKSampler_Beta", "inputs": {"steps": 8, "seed": 1}},
+            "321": {"class_type": "easy float", "inputs": {"value": 1}},
+            "264": {"class_type": "easy int", "inputs": {"value": 1920}},
+            "78": {"class_type": "LoadImage", "inputs": {"image": "old.png"}},
+        }
+        self.file = tempfile.NamedTemporaryFile(mode="w", suffix=".json")
+        json.dump(self.template, self.file); self.file.flush()
+        self.path = patch.object(handler, "API_WORKFLOW_PATH", self.file.name)
+        self.path.start()
+
+    def tearDown(self):
+        self.path.stop(); self.file.close()
+
+    def test_all_overrides_are_applied_when_present(self):
+        result, error = handler.validate_input({
+            "prompt": "x", "image": "YWJj",
+            "steps": 12, "cfg": 1.5, "ref_boost": 4.0, "ref_boost_a": 1.0,
+            "fit_mode": "fit", "grounding_px": 768, "resolution": 1344, "seed": 42,
+        })
+        self.assertIsNone(error)
+        wf = result["workflow"]
+        self.assertEqual(wf["320"]["inputs"]["steps"], 12)
+        self.assertEqual(wf["321"]["inputs"]["value"], 1.5)
+        self.assertEqual(wf["319"]["inputs"]["ref_boost"], 4.0)
+        self.assertEqual(wf["319"]["inputs"]["ref_boost_a"], 1.0)
+        self.assertEqual(wf["319"]["inputs"]["fit_mode"], "fit")
+        self.assertEqual(wf["317"]["inputs"]["grounding_px"], 768)
+        self.assertEqual(wf["318"]["inputs"]["grounding_px"], 768)
+        self.assertEqual(wf["264"]["inputs"]["value"], 1344)
+        self.assertEqual(wf["320"]["inputs"]["seed"], 42)
+
+    def test_absent_overrides_keep_bundled_defaults(self):
+        result, error = handler.validate_input({"prompt": "x", "image": "YWJj"})
+        self.assertIsNone(error)
+        wf = result["workflow"]
+        self.assertEqual(wf["320"]["inputs"]["steps"], 8)
+        self.assertEqual(wf["321"]["inputs"]["value"], 1)
+        self.assertEqual(wf["319"]["inputs"].get("ref_boost"), None)
+        self.assertEqual(wf["317"]["inputs"]["grounding_px"], 1024)
+        self.assertEqual(wf["264"]["inputs"]["value"], 1920)
+
+    def test_invalid_override_values_are_rejected(self):
+        cases = [
+            {"steps": 0}, {"steps": 101}, {"steps": 8.5}, {"steps": "x"},
+            {"cfg": -0.1}, {"cfg": 21}, {"cfg": "x"},
+            {"ref_boost": -1}, {"ref_boost": 1001}, {"ref_boost": "x"},
+            {"fit_mode": "crop"}, {"fit_mode": 3},
+            {"grounding_px": 255}, {"grounding_px": 2049}, {"grounding_px": 1.5},
+            {"resolution": 255}, {"resolution": 8193}, {"resolution": "x"},
+            {"seed": -1}, {"seed": 2**63}, {"seed": 1.5},
+        ]
+        for extra in cases:
+            payload = {"prompt": "x", "image": "YWJj", **extra}
+            result, error = handler.validate_input(payload)
+            self.assertIsNone(result, f"expected rejection for {extra}")
+            self.assertIsNotNone(error, f"expected error for {extra}")
+            self.assertIn(next(iter(extra)), error)
+
+    def test_overrides_are_ignored_in_full_workflow_mode(self):
+        workflow = {"317": {"class_type": "Krea2EditGroundedEncode", "inputs": {"prompt": "keep"}}, "78": {"class_type": "LoadImage", "inputs": {"image": "x.png"}}}
+        result, error = handler.validate_input({"workflow": workflow, "images": [], "steps": 12, "ref_boost": 4.0})
+        self.assertIsNone(error)
+        self.assertEqual(result["workflow"], workflow)
+
+
 if __name__ == "__main__":
     unittest.main()

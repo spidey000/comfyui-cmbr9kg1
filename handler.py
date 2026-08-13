@@ -251,6 +251,65 @@ def _safe_workflow_image_name(name, job_id):
     safe_job_id = re.sub(r"[^A-Za-z0-9_-]", "", str(job_id or "job")) or "job"
     return f"workflow-{safe_job_id}-{uuid.uuid4().hex}{ext}"
 
+# Shorthand-only generation overrides: (api_key, node_id, input_key, type, min, max)
+# Each key is optional; when present it overrides the bundled workflow default.
+SHORTHAND_OVERRIDES = (
+    ("steps",        "320", "steps",        int,   1, 100),
+    ("cfg",          "321", "value",        float, 0.0, 20.0),
+    ("ref_boost",    "319", "ref_boost",    float, 0.0, 1000.0),
+    ("ref_boost_a",  "319", "ref_boost_a",  float, 0.0, 1000.0),
+    ("fit_mode",     "319", "fit_mode",     str,   None, None),
+    ("grounding_px", "317", "grounding_px", int,   256, 2048),
+    ("resolution",   "264", "value",        int,   256, 8192),
+    ("seed",         "320", "seed",         int,   0, 2**63 - 1),
+)
+SHORTHAND_FIT_MODES = ("fit", "crop (legacy)")
+
+
+def _apply_shorthand_overrides(workflow, job_input):
+    """Apply optional per-request overrides onto the bundled shorthand workflow.
+
+    Only keys present in the request change values; absent keys keep the
+    bundled defaults. grounding_px is applied to both the positive and the
+    negative grounded-encode nodes. Returns an error message or None.
+    """
+    def inputs_of(node_id):
+        node = workflow.get(node_id)
+        if not isinstance(node, dict) or not isinstance(node.get("inputs"), dict):
+            return None
+        return node["inputs"]
+
+    for key, node_id, input_key, vtype, vmin, vmax in SHORTHAND_OVERRIDES:
+        if key not in job_input:
+            continue
+        value = job_input[key]
+        if isinstance(value, bool) or not isinstance(value, (int, float, str)):
+            return f"'{key}' must be a {vtype.__name__}"
+        if vtype is int:
+            if not isinstance(value, (int, float)) or int(value) != value:
+                return f"'{key}' must be an integer"
+            value = int(value)
+        elif vtype is float:
+            if not isinstance(value, (int, float)):
+                return f"'{key}' must be a number"
+            value = float(value)
+        else:
+            if key == "fit_mode" and value not in SHORTHAND_FIT_MODES:
+                return f"'fit_mode' must be one of {SHORTHAND_FIT_MODES}"
+            value = str(value)
+        if vmin is not None and isinstance(value, (int, float)) and value < vmin:
+            return f"'{key}' must be >= {vmin}"
+        if vmax is not None and isinstance(value, (int, float)) and value > vmax:
+            return f"'{key}' must be <= {vmax}"
+        target_ids = ("317", "318") if key == "grounding_px" else (node_id,)
+        for target in target_ids:
+            inputs = inputs_of(target)
+            if inputs is None:
+                return f"Bundled API workflow is missing node {target} inputs for '{key}'"
+            inputs[input_key] = value
+    return None
+
+
 def validate_input(job_input, job_id=None):
     """
     Validates the input for the handler function.
@@ -295,6 +354,10 @@ def validate_input(job_input, job_id=None):
             if not isinstance(node.get("inputs"), dict): return None, f"Bundled API workflow node {node_id} must have dict inputs"
         workflow = copy.deepcopy(workflow)
         workflow["317"].setdefault("inputs", {})["prompt"] = prompt
+
+        override_error = _apply_shorthand_overrides(workflow, job_input)
+        if override_error:
+            return None, override_error
 
         if "image" in job_input and "image_url" in job_input:
             return None, "Shorthand input must provide only one of 'image' or 'image_url'"

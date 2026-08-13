@@ -37,9 +37,11 @@ layout:
 - `/runpod-volume/models/unet/lustifyNSFWCheckpoint_v10Krea2.safetensors`
 - `/runpod-volume/models/clip/qwen3vl_4b_fp8_scaled.safetensors`
 - `/runpod-volume/models/vae/wan21_vae_fp32.safetensors`
-- `/runpod-volume/models/loras/krea2_turbo_lora_rank_64_bf16.safetensors`
 - `/runpod-volume/models/loras/krea2_identity_edit_v1_2.safetensors`
 - `/runpod-volume/models/loras/krea2filterbypass.safetensors` (required by the bundled API workflow)
+- `/runpod-volume/models/loras/krea2_turbo_lora_rank_64_bf16.safetensors` (kept for
+  compatibility/validation; **no longer enabled** by the bundled workflow — the
+  Lustify v10 Krea2 checkpoint is already turbo-based)
 
 The required UNET and filter-bypass LoRA are downloaded from Civitai when
 missing (using `CIVITAI_API_KEY`); startup fails clearly if either cannot be
@@ -129,6 +131,12 @@ array. No `example.png` is baked into the image.
 Optional `input.lora_downloads` accepts 1–7 `{url, strength}` objects (HTTPS
 Hugging Face or Civitai URLs, strength 0–2). `input.civitai_token` may provide
 per-job Civitai authorization; downloaded LoRAs are removed after the job.
+
+In shorthand mode (no `workflow`), all generation parameters except `prompt`
+and `image`/`image_url` are optional per-request overrides
+(`steps`, `cfg`, `ref_boost`, `ref_boost_a`, `fit_mode`, `grounding_px`,
+`resolution`, `seed`). Omitted keys use the bundled defaults. See
+`API_USAGE.md` for the full table, ranges, and examples.
 
 ## Deploy on RunPod
 
