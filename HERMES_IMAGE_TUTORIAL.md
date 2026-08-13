@@ -1,286 +1,185 @@
-# Tutorial para Hermes: generación y edición de imágenes
+# Tutorial para Hermes: edición de fotografías e identidad con Krea2
 
-Este documento describe cómo debe clasificar Hermes tres tipos de petición:
+Este endpoint **no hace text-to-image**. Solo admite solicitudes que incluyan al
+menos una fotografía real de referencia y sirve para:
 
-1. **Texto a imagen**: no existe imagen de referencia.
-2. **Edición de imagen**: existe una imagen y se quiere modificar su contenido.
-3. **Identity edit**: se conserva una persona y se cambia su pose, ropa, escena
-   o encuadre.
+1. Editar esa fotografía: fondo, ropa, atributos, objetos, iluminación o
+   composición.
+2. Crear una nueva fotografía o toma de la misma persona, conservando su
+   identidad y cambiando pose, posición, encuadre o escena.
+
+Nunca sustituyas la referencia por ruido ni aceptes una solicitud sin imagen
+real. Si el usuario pide una imagen sin referencia, explica que este endpoint no
+puede realizarla.
 
 ## Reglas de seguridad
 
-- Nunca escribas `RUNPOD_API_KEY`, `CIVITAI_API_KEY` ni otra credencial en el
-  repositorio, en un prompt, en una URL o en los logs.
-- No imprimas payloads que contengan Base64.
-- Guarda temporales en `/tmp` y elimínalos después de subir/descargar el
-  resultado.
-- Espera siempre un estado terminal antes de responder:
-  `COMPLETED`, `FAILED`, `TIMED_OUT` o `CANCELLED`.
-- El worker Krea2 no acepta `image_url` como entrada directa. Descarga la URL
-  usando HTTPS, límites de tamaño y timeout, y conviértela a Base64.
+- No guardes secretos en el repositorio, prompts, URLs ni logs.
+- No imprimas payloads que contengan Base64. El gateway conserva metadatos
+  redacted; registra solo identificadores, estados y metadatos no sensibles.
+- Usa `/tmp` para temporales, valida el tipo/tamaño de la imagen y valida el
+  archivo descargado antes de entregarlo. Elimina los temporales cuando ya no
+  sean necesarios.
+- Filebin es público: úsalo solo si el usuario lo pide explícitamente y solo
+  para una imagen que haya autorizado.
 
-## Tabla de decisión
+## Gateway local y contrato canónico
 
-| Petición | Flujo recomendado |
-|---|---|
-| “Genera una imagen de…” | Endpoint FLUX de texto a imagen |
-| “Edita esta imagen…” | Gateway Krea2 o FLUX Kontext, según el schema activo |
-| “Pon a esta persona en otra pose/escena” | Gateway Krea2 Identity Edit |
-
-Los endpoints públicos FLUX pueden cambiar su schema. Antes de automatizarlos,
-Hermes debe consultar el request template activo. RunPod solo garantiza el
-envoltorio común:
-
-```text
-POST https://api.runpod.ai/v2/{ENDPOINT_ID}/run
-GET  https://api.runpod.ai/v2/{ENDPOINT_ID}/status/{JOB_ID}
-```
-
-Con:
+El gateway probado escucha en `http://127.0.0.1:8173`.
 
 ```http
-Authorization: Bearer $RUNPOD_API_KEY
+POST http://127.0.0.1:8173/api/v1/calls
 Content-Type: application/json
 ```
 
-La respuesta de `/run` contiene `id` y `status`; el contenido de `input` y de
-`output` depende del worker.
+El cuerpo debe incluir `images`, con al menos una entrada `{name, image}`, y
+`prompt`. `image` acepta Base64 o una Data URL. `image_url` no es un campo
+directo del worker; si se parte de una URL, descárgala con HTTPS, límites de
+tamaño y timeout, y conviértela antes a Base64.
 
-## 1. Generación desde texto
+Ejemplo de edición:
 
-Usa un endpoint FLUX de texto a imagen, por ejemplo el endpoint configurado en
-RunPod para `FLUX.1 [schnell]` o `FLUX.1 [dev]`. No asumas que el nombre visible
-del modelo es el `ENDPOINT_ID` ni que los campos opcionales son universales.
-
-La forma general es:
-
-```bash
-curl --fail-with-body -X POST \
-  "https://api.runpod.ai/v2/${FLUX_ENDPOINT_ID}/run" \
-  -H "Authorization: Bearer ${RUNPOD_API_KEY}" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "input": {
-      "prompt": "A cinematic editorial portrait in soft natural light"
-    }
-  }'
+```json
+{
+  "images": [{"name": "persona.jpg", "image": "data:image/jpeg;base64,..."}],
+  "prompt": "Replace the background with a modern studio. Preserve the person, face, hairstyle and clothing.",
+  "steps": 12,
+  "cfg": 1,
+  "resolution": 1344,
+  "seed": 42
+}
 ```
 
-El campo `prompt` es habitual, pero Hermes debe confirmarlo en el schema del
-endpoint antes de enviar la petición. Después consulta:
+Ejemplo de nueva toma con identidad conservada:
 
-```bash
-curl --fail-with-body \
-  "https://api.runpod.ai/v2/${FLUX_ENDPOINT_ID}/status/${JOB_ID}" \
-  -H "Authorization: Bearer ${RUNPOD_API_KEY}"
+```json
+{
+  "images": [{"name": "persona.jpg", "image": "data:image/jpeg;base64,..."}],
+  "prompt": "Create a new full-body photograph of the same person standing in side profile on a city street. Preserve facial identity, face structure and hairstyle; change the pose, framing and scene.",
+  "steps": 12,
+  "cfg": 1,
+  "resolution": 1344,
+  "seed": 42
+}
 ```
 
-El resultado de un worker puede ser una URL, una lista de imágenes o Base64.
-Hermes debe inspeccionar el output sin registrarlo completo.
+Consulta el trabajo con `GET /api/v1/calls/{id}`. Espera uno de estos estados
+terminales: `COMPLETED`, `FAILED`, `TIMED_OUT`, `CANCELLED` o
+`COMPLETED_OUTPUT_UNAVAILABLE`. Solo `COMPLETED` permite entregar normalmente
+el resultado. Descarga un archivo terminado con:
 
-## 2. Edición de una imagen con el gateway Krea2
-
-El gateway local probado en este proyecto escucha en:
-
-```text
-http://127.0.0.1:8173
+```http
+GET /api/v1/calls/{id}/outputs/{filename}
 ```
 
-La llamada canónica es `POST /api/v1/calls`. La imagen puede ser Base64 puro o
-una data URL; el gateway la normaliza antes de enviarla al worker.
+La respuesta limpia del gateway puede contener metadatos del call y referencias
+a archivos; no asumas que `outputs` es una lista ni imprimas su contenido.
 
-Ejemplo Python sin dependencias externas:
+## Ejemplo Python (stdlib)
+
+El siguiente ejemplo lee una imagen local, la codifica, crea el call, hace
+polling y muestra únicamente metadatos seguros:
 
 ```python
 import base64
 import json
+import mimetypes
 import time
 import urllib.request
 from pathlib import Path
 
 GATEWAY = "http://127.0.0.1:8173"
+TERMINAL = {"COMPLETED", "FAILED", "TIMED_OUT", "CANCELLED",
+            "COMPLETED_OUTPUT_UNAVAILABLE"}
 
-def http_json(url, payload=None, headers=None):
-    data = None if payload is None else json.dumps(payload).encode()
+
+def request_json(url, payload=None, headers=None):
+    body = None if payload is None else json.dumps(payload).encode("utf-8")
     request = urllib.request.Request(
-        url,
-        data=data,
-        headers=headers or {},
+        url, data=body, headers=headers or {},
         method="POST" if payload is not None else "GET",
     )
     with urllib.request.urlopen(request, timeout=60) as response:
-        return json.loads(response.read())
+        return json.loads(response.read().decode("utf-8"))
 
-def edit_image(path, prompt):
+
+def edit(path, prompt):
     source = Path(path)
-    encoded = base64.b64encode(source.read_bytes()).decode("ascii")
+    raw = source.read_bytes()
+    media_type = mimetypes.guess_type(source.name)[0] or "application/octet-stream"
+    image = "data:%s;base64,%s" % (
+        media_type, base64.b64encode(raw).decode("ascii"))
     payload = {
-        "images": [{
-            "name": source.name,
-            "image": "data:image/jpeg;base64," + encoded,
-        }],
-        "prompt": prompt,
-        "steps": 10,
-        "cfg": 1.0,
-        "resolution": 1344,
+        "images": [{"name": source.name, "image": image}],
+        "prompt": prompt, "steps": 12, "cfg": 1, "resolution": 1344,
         "seed": 42,
     }
-    call = http_json(
-        GATEWAY + "/api/v1/calls",
-        payload,
-        {
-            "Content-Type": "application/json",
-            "Idempotency-Key": "hermes-" + str(time.time_ns()),
-        },
+    call = request_json(
+        GATEWAY + "/api/v1/calls", payload,
+        {"Content-Type": "application/json"},
     )
     call_id = call["id"]
     while True:
-        result = http_json(GATEWAY + "/api/v1/calls/" + call_id)
+        result = request_json(GATEWAY + "/api/v1/calls/" + call_id)
         state = result.get("state")
-        if state == "COMPLETED":
+        if state in TERMINAL:
+            if state != "COMPLETED":
+                raise RuntimeError("call ended with state " + str(state))
             return result
-        if state in {"FAILED", "TIMED_OUT", "CANCELLED",
-                     "COMPLETED_OUTPUT_UNAVAILABLE"}:
-            raise RuntimeError(result.get("error") or state)
         time.sleep(3)
 
-result = edit_image(
-    "/tmp/source.jpg",
-    "Replace the background with a modern studio. Preserve the person, face, "
-    "hairstyle, clothing and lighting.",
+
+result = edit(
+    "/tmp/persona.jpg",
+    "Create a new photograph of the same person sitting in a cafe. Preserve identity and hairstyle; change pose and scene.",
 )
-print(result["id"], result["state"], result["outputs"])
+print({key: result.get(key) for key in ("id", "state", "job_id", "created", "updated", "outputs")})
 ```
 
-Cuando el estado sea `COMPLETED`, descarga cada archivo con:
+## Controles confirmados
 
-```text
-GET /api/v1/calls/{CALL_ID}/outputs/{FILENAME}
-```
+- `prompt` se aplica al nodo `317`.
+- `negative_prompt` se aplica al nodo `318`.
+- `steps`, `seed` y otros parámetros del muestreador se aplican al nodo `320`.
+- `cfg` se aplica al nodo `321`.
+- `resolution`/`longest_side` se aplica al nodo `264`.
+- `ref_boost`, `ref_boost_a`, `fit_mode` y `grounding_px` son controles del
+  workflow, no promesas universales del gateway. Solo pueden enviarse mediante
+  `extra_input` si el workflow activo los soporta. En el workflow probado son
+  `319.ref_boost`, `319.ref_boost_a`, `319.fit_mode`, `317.grounding_px` y
+  `318.grounding_px`.
 
-El gateway conserva solo metadatos redacted en SQLite; no guardes el resultado
-Base64 en logs.
+`denoise=1` es un ajuste del workflow y no transforma este endpoint en un flujo
+sin referencia: no inventes una imagen de ruido ni omitas la fotografía real.
 
-## 3. Cambiar pose o escena conservando identidad
+## Payload directo al worker (referencia avanzada)
 
-Usa el mismo gateway Krea2, pero describe explícitamente que es **la misma
-persona**. Los ajustes de identidad se aplican mediante `extra_input`, porque
-son controles del workflow y no campos top-level del gateway.
+Si no se usa el gateway, `workflow` debe ser el objeto API completo, nunca un
+string. Usa `api-workflow.json`, no `workflow.json` (este último es el formato
+canvas). El nombre de cada `images[].name` debe coincidir con
+`LoadImage.inputs.image` del workflow; por ejemplo:
 
 ```json
 {
-  "images": [
-    {
-      "name": "person.jpg",
-      "image": "data:image/jpeg;base64,..."
-    }
-  ],
-  "prompt": "Create a new full-body shot of the same person standing in
-  side-profile on a city street. Preserve facial identity, face structure,
-  hairstyle and clothing.",
-  "steps": 12,
-  "cfg": 1,
-  "resolution": 1344,
-  "seed": 42,
-  "extra_input": {
-    "319.ref_boost": 4.0,
-    "319.ref_boost_a": 1.0,
-    "319.fit_mode": "fit",
-    "317.grounding_px": 768,
-    "318.grounding_px": 768
+  "input": {
+    "workflow": "<objeto completo de api-workflow.json, con el prompt en el nodo 317>",
+    "images": [{"name": "persona.jpg", "image": "BASE64_SIN_PREFIJO"}]
   }
 }
 ```
 
-Prompts útiles:
+El ejemplo es ilustrativo: `workflow` debe ser un objeto JSON completo, no una
+cadena; el prompt debe estar dentro de `workflow["317"].inputs.prompt` y todos
+los nodos deben estar conectados. Para Hermes, usa el gateway descrito arriba:
+él aplica `prompt`, valida la solicitud y construye el payload directo correcto.
+
+## Checklist
 
 ```text
-Create a new shot of the same person sitting in a café, three-quarter view.
-Preserve facial identity, hairstyle, clothing and recognizable features.
+¿Hay al menos una fotografía real? -> si no, rechazar esta solicitud.
+Edición de fotografía              -> describir cambios y qué preservar.
+Nueva toma de la persona           -> decir explícitamente “misma persona” e identidad.
+Polling                            -> esperar estado terminal.
+Resultado                          -> descargar por /outputs/{filename} y validar.
+Compartir                          -> Filebin solo por petición explícita.
 ```
-
-```text
-Put the same person in a mountain landscape, walking away and looking over
-their shoulder. Preserve the face and identity while changing the pose.
-```
-
-```text
-Change the pose to a walking pose with the left arm raised. Keep the same
-person, face, hairstyle, clothing and lighting.
-```
-
-Guía de `ref_boost`:
-
-| Objetivo | Valor orientativo |
-|---|---:|
-| Máxima fidelidad | 4–6 |
-| Equilibrio | 2.5–4 |
-| Más libertad creativa | 1–2 |
-
-La identidad no está garantizada al 100 %. Hermes debe advertirlo si el usuario
-solicita una pose extrema, perfil completo o cambios grandes de iluminación.
-
-## Workflow directo del worker
-
-Si no se usa el gateway, el worker Krea2 requiere el workflow API completo como
-objeto, nunca como string. El siguiente fragmento es esquemático; no lo envíes
-sin completar todos los nodos de `api-workflow.json`:
-
-```json
-{
-  "workflow": {
-    "78": {
-      "class_type": "LoadImage",
-      "inputs": {"image": "example.png"}
-    }
-  },
-  "images": [
-    {"name": "example.png", "image": "BASE64_SIN_PREFIJO"}
-  ]
-}
-```
-
-El nombre de `images[].name` debe coincidir con `LoadImage.inputs.image`. Usa
-`api-workflow.json`; `workflow.json` es el formato canvas y no es un payload API
-válido. Para múltiples imágenes usa `image_node_map`.
-
-## Subir resultados a Filebin
-
-Solo si el usuario lo solicita, Hermes puede publicar un resultado:
-
-```bash
-BIN="hermes-krea2-$(python3 -c 'import secrets; print(secrets.token_hex(6))')"
-FILE="/tmp/output.png"
-SHA=$(sha256sum "$FILE" | cut -d' ' -f1)
-
-curl --fail -X POST \
-  -H "Content-Type: image/png" \
-  -H "Content-SHA256: $SHA" \
-  --data-binary "@$FILE" \
-  "https://filebin.net/$BIN/output.png"
-
-echo "https://filebin.net/$BIN"
-```
-
-Filebin es público y los bins expiran aproximadamente en seis días. No subas
-credenciales, payloads ni imágenes que el usuario no haya autorizado.
-
-## Checklist de Hermes
-
-```text
-Sin imagen                 -> FLUX text-to-image; verificar schema.
-Con imagen, edición común  -> Krea2 gateway o FLUX Kontext; verificar schema.
-Misma persona, nueva pose  -> Krea2 Identity Edit.
-URL remota                 -> descargar con HTTPS, límites y timeout; luego Base64.
-Resultado                  -> esperar estado terminal y validar el archivo.
-Compartir                  -> Filebin solo si el usuario lo pide.
-```
-
-## Referencias
-
-- `api-workflow.json`: workflow API probado.
-- `README.md`: contrato de despliegue y assets del worker.
-- `https://docs.runpod.io/serverless/endpoints/send-requests`: contrato común
-  de RunPod Serverless.
-- `https://docs.runpod.io/serverless/endpoints/operation-reference`: estados,
-  polling y operaciones.

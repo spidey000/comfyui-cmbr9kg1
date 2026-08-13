@@ -154,8 +154,8 @@ The GitHub repository is public, so cloning it does not require a GitHub token.
 - `validate_nodes.py` — strict runtime node-registration and model-volume check.
 - `api-workflow.json` — ComfyUI API workflow.
 - `workflow.json` — original canvas workflow.
-- `HERMES_IMAGE_TUTORIAL.md` — tutorial versionado para generar, editar y
-  cambiar la pose de personas usando Hermes, el gateway Krea2 y RunPod.
+- `HERMES_IMAGE_TUTORIAL.md` — tutorial versionado para edición de fotografías
+  e identity edit de personas con Hermes y el gateway Krea2.
 
 ## Release gates
 
