@@ -34,8 +34,8 @@ Model assets are not baked into the Docker image. Attach Network Volume
 `7ppvs7a5jw` and mount it at `/runpod-volume`. It must contain this canonical
 layout:
 
-- `/runpod-volume/models/unet/krea2_raw_int8_convrot.safetensors`
-- `/runpod-volume/models/clip/qwen3vl_4b_bf16.safetensors`
+- `/runpod-volume/models/unet/lustifyNSFWCheckpoint_v10Krea2.safetensors`
+- `/runpod-volume/models/clip/qwen3vl_4b_fp8_scaled.safetensors`
 - `/runpod-volume/models/vae/wan21_vae_fp32.safetensors`
 - `/runpod-volume/models/loras/krea2_turbo_lora_rank_64_bf16.safetensors`
 - `/runpod-volume/models/loras/krea2_identity_edit_v1_2.safetensors`
@@ -46,8 +46,8 @@ The Civitai filter-bypass LoRA is OPTIONAL at startup and is attempted only when
 
 Source links:
 
-- UNET: https://huggingface.co/Comfy-Org/Krea-2/resolve/952f49d49653cb42e7d6cf7cbfad74738073ec7d/diffusion_models/krea2_raw_int8_convrot.safetensors
-- Text encoder: https://huggingface.co/Comfy-Org/Krea-2/resolve/952f49d49653cb42e7d6cf7cbfad74738073ec7d/text_encoders/qwen3vl_4b_bf16.safetensors
+- UNET: https://civitai.com/api/download/models/3112728?type=Other&format=SafeTensor&fp=bf16
+- Text encoder: https://huggingface.co/Comfy-Org/Qwen3-VL/resolve/main/text_encoders/qwen3vl_4b_fp8_scaled.safetensors
 - VAE source (saved as `wan21_vae_fp32.safetensors`): https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/resolve/06e001fc51048fb03433a6fb25334de7836704a5/split_files/vae/wan_2.1_vae.safetensors
 - Turbo LoRA: https://huggingface.co/Comfy-Org/Krea-2/resolve/952f49d49653cb42e7d6cf7cbfad74738073ec7d/loras/krea2_turbo_lora_rank_64_bf16.safetensors
 - Identity Edit LoRA: https://huggingface.co/conradlocke/krea2-identity-edit/resolve/89e9e7a09ee2e5c9331e952063d79b1b8a703280/krea2_identity_edit_v1_2.safetensors
@@ -91,8 +91,8 @@ download() { # url rel size
   test "$(stat -c %s "$part")" = "$3"
   mv -f "$part" "$final"; echo "READY $2"
 }
-download https://huggingface.co/Comfy-Org/Krea-2/resolve/952f49d49653cb42e7d6cf7cbfad74738073ec7d/diffusion_models/krea2_raw_int8_convrot.safetensors unet/krea2_raw_int8_convrot.safetensors 13492686496
-download https://huggingface.co/Comfy-Org/Krea-2/resolve/952f49d49653cb42e7d6cf7cbfad74738073ec7d/text_encoders/qwen3vl_4b_bf16.safetensors clip/qwen3vl_4b_bf16.safetensors 8875719384
+# The required UNET is downloaded by bootstrap using CIVITAI_API_KEY.
+download https://huggingface.co/Comfy-Org/Qwen3-VL/resolve/main/text_encoders/qwen3vl_4b_fp8_scaled.safetensors clip/qwen3vl_4b_fp8_scaled.safetensors 5242467968
 download https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/resolve/06e001fc51048fb03433a6fb25334de7836704a5/split_files/vae/wan_2.1_vae.safetensors vae/wan21_vae_fp32.safetensors 253815318
 download https://huggingface.co/Comfy-Org/Krea-2/resolve/952f49d49653cb42e7d6cf7cbfad74738073ec7d/loras/krea2_turbo_lora_rank_64_bf16.safetensors loras/krea2_turbo_lora_rank_64_bf16.safetensors 469423778
 download https://huggingface.co/conradlocke/krea2-identity-edit/resolve/89e9e7a09ee2e5c9331e952063d79b1b8a703280/krea2_identity_edit_v1_2.safetensors loras/krea2_identity_edit_v1_2.safetensors 1828256432
