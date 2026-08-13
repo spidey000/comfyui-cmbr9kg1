@@ -107,6 +107,18 @@ docker build -t krea2-edit .
 The build validates dependencies only. Populate the Network Volume before
 deployment; runtime validates node registration and all volume assets.
 
+The image does not download model files during the Docker build. Models are
+populated on the attached Network Volume and validated at worker startup. A
+local build therefore does not require model downloads:
+
+```bash
+docker build -t krea2-edit-no-models .
+```
+
+The local image is suitable for build/debug work only until the Network Volume
+is populated. Production workers use the same image with the volume mounted;
+runtime validation remains strict and requires the assets there.
+
 ## Run locally
 
 ```bash

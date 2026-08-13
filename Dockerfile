@@ -72,6 +72,9 @@ RUN set -eux; \
       opencv-python opencv-python-headless opencv-contrib-python-headless; \
     python3 -m pip install --no-cache-dir opencv-contrib-python; \
     python3 -c 'from cv2.ximgproc import guidedFilter; print("OpenCV guidedFilter:", guidedFilter)'; \
+    python3 -m pip install --no-cache-dir \
+      torch==2.11.0 torchvision==0.26.0 torchaudio==2.11.0 \
+      --index-url https://download.pytorch.org/whl/cu130; \
     python -m pip check
 
 # Dependency validation only; node imports and model assets are deferred to the
