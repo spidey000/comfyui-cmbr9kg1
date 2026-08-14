@@ -72,15 +72,17 @@ RUN set -eux; \
       opencv-python opencv-python-headless opencv-contrib-python-headless; \
     python3 -m pip install --no-cache-dir opencv-contrib-python; \
     python3 -c 'from cv2.ximgproc import guidedFilter; print("OpenCV guidedFilter:", guidedFilter)'; \
-    python3 -m pip install --no-cache-dir \
+    python3 -m pip install --no-cache-dir --force-reinstall \
       torch==2.11.0 torchvision==0.26.0 torchaudio==2.11.0 \
       --index-url https://download.pytorch.org/whl/cu130; \
+    python3 -c 'import sys, torch; print("sys.executable:", sys.executable); print("torch.__version__:", torch.__version__); print("torch.version.cuda:", torch.version.cuda); cuda = tuple(map(int, torch.version.cuda.split(".")[:2])); assert cuda >= (13, 0), cuda'; \
     python -m pip check
 
 # Dependency validation only; node imports and model assets are deferred to the
 # mounted Network Volume and runtime startup.
 COPY validate_nodes.py /tmp/validate_nodes.py
 RUN KREA2_SKIP_NODE_CHECK=1 KREA2_VALIDATE_MODEL_ASSETS=0 python3 /tmp/validate_nodes.py
+COPY sitecustomize.py /opt/krea2/sitecustomize.py
 COPY bootstrap.sh /usr/local/bin/krea2-runtime-init
 RUN chmod +x /usr/local/bin/krea2-runtime-init
 ENTRYPOINT ["/usr/local/bin/krea2-runtime-init"]

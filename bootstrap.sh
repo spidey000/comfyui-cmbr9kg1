@@ -11,6 +11,9 @@ tmp=''
 cleanup() { [[ -z "$tmp" ]] || rm -f -- "$tmp"; }
 trap cleanup EXIT
 
+# Load the targeted logger customization in /start.sh and its child process.
+export PYTHONPATH="/opt/krea2${PYTHONPATH:+:$PYTHONPATH}"
+
 if [[ -s "$target" ]]; then
   echo "OK: optional filter-bypass LoRA already present"
 elif [[ -z "${CIVITAI_API_KEY:-}" ]]; then
