@@ -79,10 +79,7 @@ RUN set -eux; \
     python3 -c 'import sys, torch; print("sys.executable:", sys.executable); print("torch.__version__:", torch.__version__); print("torch.version.cuda:", torch.version.cuda); cuda = tuple(map(int, torch.version.cuda.split(".")[:2])); assert cuda >= (13, 0), cuda'; \
     python -m pip check
 
-# Dependency validation only; node imports and model assets are deferred to the
-# mounted Network Volume and runtime startup.
-COPY validate_nodes.py /tmp/validate_nodes.py
-RUN KREA2_SKIP_NODE_CHECK=1 KREA2_VALIDATE_MODEL_ASSETS=0 python3 /tmp/validate_nodes.py
+# Node imports and model assets are validated at runtime startup.
 COPY sitecustomize.py /opt/krea2/sitecustomize.py
 COPY bootstrap.sh /usr/local/bin/krea2-runtime-init
 RUN chmod +x /usr/local/bin/krea2-runtime-init

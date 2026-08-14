@@ -151,15 +151,8 @@ The GitHub repository is public, so cloning it does not require a GitHub token.
 
 - `Dockerfile` — pinned custom nodes and strict validation.
 - `bootstrap.sh` — runtime optional download and worker startup.
-- `validate_nodes.py` — strict runtime node-registration and model-volume check.
 - `api-workflow.json` — ComfyUI API workflow.
 - `workflow.json` — original canvas workflow.
 - `hermes_runpod_krea2.py` — cliente CLI para la API HTTP Serverless de RunPod.
 - `HERMES_IMAGE_TUTORIAL.md` — cliente/documentación Serverless para edición de
   fotografías e identity edit de personas con Hermes.
-
-## Release gates
-
-Expected file sizes for public model assets and the GPU smoke E2E test are
-release gates. If they are not automated in the release pipeline yet, run and
-record both checks manually before publishing an image.
