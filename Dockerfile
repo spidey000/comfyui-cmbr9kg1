@@ -75,6 +75,7 @@ RUN set -eux; \
     python3 -m pip install --no-cache-dir --force-reinstall \
       torch==2.11.0 torchvision==0.26.0 torchaudio==2.11.0 \
       --index-url https://download.pytorch.org/whl/cu130; \
+    python3 -m pip install --no-cache-dir comfy-kitchen==0.2.31; \
     python3 -c 'import sys, torch; print("sys.executable:", sys.executable); print("torch.__version__:", torch.__version__); print("torch.version.cuda:", torch.version.cuda); cuda = tuple(map(int, torch.version.cuda.split(".")[:2])); assert cuda >= (13, 0), cuda'; \
     python -m pip check
 
